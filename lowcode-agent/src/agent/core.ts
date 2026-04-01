@@ -502,6 +502,15 @@ export class AgentLoop {
 
           // 有工具调用 → 继续循环
         } else {
+          // 检测"说了要做但没做"的情况：模型输出了继续意图但没有工具调用
+          const continuePatterns = /继续|还有|remaining|next|继续读取|继续查看|还没.*完|还没.*完|还有.*文件|还有.*没读/
+          if (continuePatterns.test(fullText) && this.currentIteration < this.maxIterations) {
+            console.error(`[AgentLoop] 检测到继续意图但无工具调用，注入提示继续`)
+            this.conversation.addAssistant(fullText)
+            this.conversation.addToolResult('你的上一次回复表达了继续操作的意图，但没有输出 <tool> 标签。请立即输出 <tool name="..."> 标签继续操作，不要输出任何多余文字。')
+            continue
+          }
+
           console.error(`[AgentLoop] 无工具调用，结束循环`)
           this.conversation.addAssistant(fullText)
           break
