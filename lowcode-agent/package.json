@@ -1,0 +1,26 @@
+{
+  "name": "lowcode-agent",
+  "version": "0.1.0",
+  "description": "A code agent for creating and modifying low-code JSON files (pages + APIs)",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:real": "vitest run --config vitest.real.config.ts"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "dotenv": "^17.3.1",
+    "openai": "^6.33.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.2"
+  }
+}
