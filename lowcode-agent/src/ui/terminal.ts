@@ -10,7 +10,7 @@
  */
 import * as readline from 'node:readline'
 import chalk from 'chalk'
-import type { AgentEvent, ConfirmFn, TokenUsage } from '../agent/core.js'
+import type { AgentEvent, ConfirmFn, TokenUsage, AskUserFn, AskUserInput } from '../agent/core.js'
 import { SpinnerManager } from '../utils/spinner.js'
 import { formatToolInput, formatToolResult, highlightJson, previewBox } from '../utils/format.js'
 import { formatPlanSummary } from '../agent/plan.js'
@@ -75,6 +75,48 @@ export class TerminalUI {
       this.write(confirmed ? chalk.green('  ✓ 已确认') : chalk.red('  ✗ 已拒绝'))
       this.write('')
       return confirmed
+    }
+  }
+
+  /** 获取用户提问回调函数（注入到 AgentCore） */
+  getAskUserFn(): AskUserFn {
+    return async (question: AskUserInput): Promise<string> => {
+      this.spinner.stop()
+      this.write('')
+      this.write(chalk.cyan.bold(`  ❓ ${question.question}`))
+
+      question.options.forEach((opt, i) => {
+        this.write(chalk.white(`    ${i + 1}. ${opt}`))
+      })
+
+      if (question.allow_custom) {
+        this.write(chalk.gray('    0. 自定义输入'))
+      }
+
+      const answer = await new Promise<string>((resolve) => {
+        this.rl.question(chalk.green('  请选择: '), (input) => {
+          const choice = input.trim()
+          const num = parseInt(choice, 10)
+
+          if (!isNaN(num)) {
+            if (num >= 1 && num <= question.options.length) {
+              resolve(question.options[num - 1])
+            } else if (num === 0 && question.allow_custom) {
+              this.rl.question(chalk.green('  请输入: '), (custom) => {
+                resolve(custom.trim() || question.options[0])
+              })
+            } else {
+              resolve(choice)
+            }
+          } else {
+            resolve(choice)
+          }
+        })
+      })
+
+      this.write(chalk.green(`  ✓ 已选择: ${answer}`))
+      this.write('')
+      return answer
     }
   }
 
@@ -148,6 +190,20 @@ export class TerminalUI {
         this.writeLine('')
         this.writeLine(chalk.cyan(formatPlanSummary(event.plan)))
         this.writeLine(chalk.yellow('  等待确认...'))
+        this.writeLine('')
+        break
+      }
+
+      case 'ask_user': {
+        this.spinner.stop()
+        this.writeLine('')
+        this.writeLine(chalk.cyan.bold(`  ❓ ${event.question.question}`))
+        event.question.options.forEach((opt, i) => {
+          this.writeLine(chalk.white(`    ${i + 1}. ${opt}`))
+        })
+        if (event.question.allow_custom) {
+          this.writeLine(chalk.gray('    0. 自定义输入'))
+        }
         this.writeLine('')
         break
       }

@@ -14,6 +14,7 @@
  */
 import OpenAI from 'openai'
 import type { ChatCompletionMessageParam, ChatCompletionChunk } from 'openai/resources/chat/completions.js'
+import { z } from 'zod'
 import type { ToolRegistry } from '../tools/registry.js'
 import type { ToolContext } from '../tools/types.js'
 import type { ProjectContext } from './context.js'
@@ -30,6 +31,16 @@ import { logRequest, logResponse, logToolCall, logToolResult, logError as logLlm
 
 // ─── 事件类型（Agent 不知道 UI 的存在）──────────────────────
 
+// ─── ask_user 工具 Schema ────────────────────────────────────
+
+export const askUserSchema = z.object({
+  question: z.string().describe('向用户提出的问题'),
+  options: z.array(z.string()).min(2).max(4).describe('2-4 个选项供用户选择'),
+  allow_custom: z.boolean().optional().default(false).describe('是否允许用户输入自定义答案'),
+})
+
+export type AskUserInput = z.infer<typeof askUserSchema>
+
 export interface TokenUsage {
   inputTokens: number
   outputTokens: number
@@ -41,11 +52,15 @@ export type AgentEvent =
   | { type: 'tool_call'; tool: string; input: unknown }
   | { type: 'tool_result'; tool: string; success: boolean; message: string }
   | { type: 'plan_summary'; plan: Plan }
+  | { type: 'ask_user'; question: AskUserInput }
   | { type: 'error'; error: string }
   | { type: 'turn_end'; usage?: TokenUsage }
 
 /** 确认回调 — 由 UI/SDK 注入，AgentCore 通过它暂停等待用户确认 */
 export type ConfirmFn = (tool: string, description: string, preview?: string) => Promise<boolean>
+
+/** 用户提问回调 — 由 UI/SDK 注入，AgentLoop 通过它暂停等待用户回答 */
+export type AskUserFn = (question: AskUserInput) => Promise<string>
 
 /** LLM 配置 */
 export interface LlmConfig {
@@ -62,6 +77,8 @@ export interface AgentOptions {
   stream?: boolean
   /** 写操作确认回调 */
   confirmFn?: ConfirmFn
+  /** 用户提问回调 */
+  askUserFn?: AskUserFn
   /** 项目记忆内容（来自 AGENT.md） */
   projectMemory?: string
 }
@@ -174,6 +191,7 @@ export class AgentLoop {
   private skills: Skill[]
   private options: AgentOptions
   private confirmFn?: ConfirmFn
+  private askUserFn?: AskUserFn
   private maxIterations: number
   private maxTokens: number
   private currentIteration = 0
@@ -199,6 +217,7 @@ export class AgentLoop {
     this.toolCtx = deps.toolCtx
     this.options = deps.options ?? {}
     this.confirmFn = deps.options?.confirmFn
+    this.askUserFn = deps.options?.askUserFn
     this.maxIterations = deps.options?.maxIterations ?? 30
     this.maxTokens = deps.options?.maxTokens ?? 4096
   }
@@ -372,6 +391,40 @@ export class AgentLoop {
                 }
                 this.conversation.addToolResult('用户拒绝了此计划。请重新规划或询问用户需要调整什么。')
               }
+              continue
+            }
+
+            // ─── ask_user 特殊处理 ──────────────────────────
+            if (tc.name === 'ask_user') {
+              console.error('[AgentLoop] 检测到 ask_user 调用')
+              logToolCall(tc.name, tc.input)
+              yield { type: 'tool_call', tool: tc.name, input: tc.input }
+
+              const parsed = askUserSchema.safeParse(tc.input)
+              if (!parsed.success) {
+                const errMsg = `提问格式错误: ${parsed.error.message}`
+                yield { type: 'error', error: errMsg }
+                this.conversation.addToolResult(`错误: ${errMsg}`)
+                continue
+              }
+
+              const askData = parsed.data
+              yield { type: 'ask_user', question: askData }
+
+              let answer: string
+              if (this.askUserFn) {
+                answer = await this.askUserFn(askData)
+              } else {
+                answer = '(无回答回调，默认继续)'
+              }
+
+              yield {
+                type: 'tool_result',
+                tool: tc.name,
+                success: true,
+                message: answer,
+              }
+              this.conversation.addToolResult(`用户回答: ${answer}`)
               continue
             }
 

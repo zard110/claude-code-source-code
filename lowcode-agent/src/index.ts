@@ -65,6 +65,7 @@ async function main() {
       skills: skillRegistry.getAll(),
       options: {
         confirmFn: ui.getConfirmFn(),
+        askUserFn: ui.getAskUserFn(),
         projectMemory: projectMemory ?? undefined,
       },
     })

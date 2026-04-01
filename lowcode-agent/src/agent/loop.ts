@@ -12,11 +12,11 @@ import {
   AgentLoop as CoreLoop,
   Conversation,
 } from './core.js'
-import type { Message, AgentEvent, ConfirmFn } from './core.js'
+import type { Message, AgentEvent, ConfirmFn, AskUserFn } from './core.js'
 
 // Re-export for backward compat
 export { extractToolCalls, cleanToolTags } from './tool-parser.js'
-export type { Message, AgentEvent, ConfirmFn } from './core.js'
+export type { Message, AgentEvent, ConfirmFn, AskUserFn } from './core.js'
 
 import OpenAI from 'openai'
 
@@ -42,6 +42,7 @@ export async function* runAgentLoop(
   toolCtx: ToolContext,
   skills: Skill[] = [],
   confirmFn?: ConfirmFn,
+  askUserFn?: AskUserFn,
 ): AsyncGenerator<AgentEvent> {
   const conversation = new Conversation(conversationHistory, projectCtx)
   const loop = new CoreLoop({
@@ -49,7 +50,7 @@ export async function* runAgentLoop(
     toolRegistry,
     toolCtx,
     skills,
-    options: { confirmFn },
+    options: { confirmFn, askUserFn },
   })
 
   // 同步 conversationHistory（外部数组引用保持一致）

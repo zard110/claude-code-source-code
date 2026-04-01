@@ -15,12 +15,12 @@ import { resolve } from 'node:path'
 config({ path: resolve(import.meta.dirname, '..', '.env.local') })
 
 import { AgentLoop, Conversation } from './agent/core.js'
-import type { AgentEvent, ConfirmFn, LlmConfig, AgentOptions, Message } from './agent/core.js'
+import type { AgentEvent, ConfirmFn, LlmConfig, AgentOptions, Message, AskUserFn, AskUserInput } from './agent/core.js'
 import { createDefaultRegistry } from './tools/registry.js'
 import { buildProjectContext, createToolContext } from './agent/context.js'
 import { SkillRegistry } from './skills/registry.js'
 
-export type { AgentEvent, ConfirmFn, LlmConfig, AgentOptions, Message }
+export type { AgentEvent, ConfirmFn, LlmConfig, AgentOptions, Message, AskUserFn, AskUserInput }
 
 /**
  * SDK 调用结果
@@ -102,6 +102,8 @@ export function createSDK(deps?: {
             break
           case 'error':
             result.errors.push({ error: event.error })
+            break
+          case 'ask_user':
             break
         }
       }
