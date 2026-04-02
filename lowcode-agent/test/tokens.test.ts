@@ -118,10 +118,10 @@ describe('getContextWindow', () => {
   })
 
   it('模糊匹配 qwen/qwq-32b', () => {
-    expect(getContextWindow('qwen/qwq-32b')).toBe(32_768)
+    expect(getContextWindow('qwen/qwq-32b')).toBe(131_072)
   })
 
   it('未知模型返回默认值', () => {
-    expect(getContextWindow('unknown-model')).toBe(32_768)
+    expect(getContextWindow('unknown-model')).toBe(128_000)
   })
 })

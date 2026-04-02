@@ -32,10 +32,15 @@ const MODEL_WINDOWS: Record<string, number> = {
   'gpt-4o': 128_000,
   'gpt-4o-mini': 128_000,
   'gpt-4': 8_192,
-  'qwq-32b': 32_768,
+  'qwq': 131_072,
+  'qwen': 131_072,
+  'glm-5': 128_000,
+  'glm-4': 128_000,
+  'kimi': 128_000,
+  'MiniMax': 1_000_000,
 }
 
-const DEFAULT_WINDOW = 32_768
+const DEFAULT_WINDOW = 128_000
 
 export function getContextWindow(model: string): number {
   // 模糊匹配：model 可能是 "qwq-32b" 或 "qwen/qwq-32b" 等

@@ -913,7 +913,9 @@ export class AgentLoop {
           // 策略：短文本 + 无结束标记 + 有操作信号词 → 注入提示重试
           const hasCompletionMark = /总结|完成了|已创建|已删除|已修改|已添加|已补充|已更新|执行成功|全部完成|没有找到|不存在|暂无|无需|告诉我|请随时|随时联系|summary|done|success|not found|no\s+need/i.test(fullText)
           // 注意：不含"需要"（"如有需要随时告诉我"会误匹配）
-          const hasActionSignal = /继续|还有|剩下|补充|添加|调整|更新|新建|接下来|现在来|让我来|我来看|修改|创建|删除|移动|remaining|continue|next|still|add|let me|need to|will|going to/i.test(fullText)
+          const hasActionSignal = /继续|还有|剩下|接下来|修改|创建|删除|移动|remaining|continue|next|still|add|need to/i.test(fullText)
+
+
           const isShortWithoutTool = fullText.length < 300 && fullText.length > 0 && !hasCompletionMark && hasActionSignal
           if (isShortWithoutTool && this.currentIteration < this.maxIterations) {
             // 防死循环：如果连续 2 次触发继续意图，说明模型确实没打算调工具
