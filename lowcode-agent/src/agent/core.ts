@@ -316,6 +316,8 @@ export class AgentLoop {
         let fullText = ''
         let thinkingCount = 0
         let contentCount = 0
+        let insideThink = false  // 追踪 <think> 标签状态
+        let thinkBuffer = ''     // 缓冲可能跨 chunk 的标签
 
         for await (const chunk of stream) {
           // 提取 usage（在最后一个 chunk 中）
@@ -338,10 +340,56 @@ export class AgentLoop {
 
           if (delta.content) {
             contentCount++
-            fullText += delta.content
-            yield { type: 'assistant_text', text: delta.content }
+            // qwq 模型的推理内容有时泄漏到 content 流中（<think>...</think>）
+            // 需要过滤掉，转为 thinking 事件
+            let text = delta.content
+
+            // 检测 <think> 开始
+            if (!insideThink && text.includes('<think>')) {
+              const idx = text.indexOf('<think>')
+              const before = text.slice(0, idx)
+              if (before.trim()) {
+                fullText += before
+                yield { type: 'assistant_text', text: before }
+              }
+              insideThink = true
+              text = text.slice(idx + '<think>'.length)
+            }
+
+            if (insideThink) {
+              // 检测 </think> 结束
+              if (text.includes('</think>')) {
+                const idx = text.indexOf('</think>')
+                const thinkContent = thinkBuffer + text.slice(0, idx)
+                thinkBuffer = ''
+                insideThink = false
+                if (thinkContent.trim()) {
+                  thinkingCount++
+                  yield { type: 'thinking', text: thinkContent }
+                }
+                // </think> 之后的内容是正常输出
+                const after = text.slice(idx + '</think>'.length)
+                if (after.trim()) {
+                  fullText += after
+                  yield { type: 'assistant_text', text: after }
+                }
+              } else {
+                // 还在 think 块内，缓冲
+                thinkBuffer += text
+              }
+            } else {
+              // 清理独立的 </think> 残留（有时 <think> 在 reasoning_content 里，</think> 在 content 里）
+              const cleaned = text.replace(/<\/?think>/g, '')
+              if (cleaned.trim() || cleaned.includes('\n')) {
+                fullText += cleaned
+                yield { type: 'assistant_text', text: cleaned }
+              }
+            }
           }
         }
+
+        // 清理 fullText 中可能残留的 think 标签
+        fullText = fullText.replace(/<think>[\s\S]*?<\/think>\s*/g, '').replace(/<\/?think>\s*/g, '').trim()
 
         console.error(`[AgentLoop] 流结束: thinking=${thinkingCount}chunks content=${contentCount}chunks fullText=${fullText.length}字符 usage=${lastUsage ? `${lastUsage.inputTokens}/${lastUsage.outputTokens}` : 'N/A'}`)
 
