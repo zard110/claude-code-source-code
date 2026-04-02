@@ -174,6 +174,9 @@ export class TerminalUI {
       }
 
       case 'tool_call': {
+        // ask_user 的 tool_call 由 askUserFn 回调处理显示，跳过避免重复
+        if (event.tool === 'ask_user') break
+
         this.spinner.stop()
         if (ctx.lastEventType === 'thinking') {
           const elapsed = formatElapsed(Date.now() - ctx.thinkingStart)
@@ -208,16 +211,7 @@ export class TerminalUI {
       }
 
       case 'ask_user': {
-        this.spinner.stop()
-        this.writeLine('')
-        this.writeLine(chalk.cyan.bold(`  ❓ ${event.question.question}`))
-        event.question.options.forEach((opt, i) => {
-          this.writeLine(chalk.white(`    ${i + 1}. ${opt}`))
-        })
-        if (event.question.allow_custom) {
-          this.writeLine(chalk.gray('    0. 自定义输入'))
-        }
-        this.writeLine('')
+        // ask_user 的显示和交互由 askUserFn 回调处理，跳过避免重复
         break
       }
 

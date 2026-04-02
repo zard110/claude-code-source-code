@@ -659,10 +659,17 @@ export class AgentLoop {
           // 兜底：模型输出了操作意图但没有 <tool> 标签
           // 短文本（< 300字符）且不含结束标记，说明模型"忘了"输出工具调用
           // 策略：短文本 + 无结束标记 + 有操作信号词 → 注入提示重试
-          const hasCompletionMark = /总结|完成了|已创建|已删除|已修改|已添加|已补充|已更新|执行成功|全部完成|没有找到|不存在|暂无|无需|summary|done|success|not found|no\s+need/i.test(fullText)
-          const hasActionSignal = /继续|还有|剩下|补充|添加|调整|更新|新建|接下来|现在来|让我|我来|需要|修改|创建|删除|移动|remaining|continue|next|still|add|let me|need to|will|going to/i.test(fullText)
+          const hasCompletionMark = /总结|完成了|已创建|已删除|已修改|已添加|已补充|已更新|执行成功|全部完成|没有找到|不存在|暂无|无需|告诉我|请随时|随时联系|summary|done|success|not found|no\s+need/i.test(fullText)
+          // 注意：不含"需要"（"如有需要随时告诉我"会误匹配）
+          const hasActionSignal = /继续|还有|剩下|补充|添加|调整|更新|新建|接下来|现在来|让我来|我来看|修改|创建|删除|移动|remaining|continue|next|still|add|let me|need to|will|going to/i.test(fullText)
           const isShortWithoutTool = fullText.length < 300 && fullText.length > 0 && !hasCompletionMark && hasActionSignal
           if (isShortWithoutTool && this.currentIteration < this.maxIterations) {
+            // 防死循环：如果连续 2 次触发继续意图，说明模型确实没打算调工具
+            if (this.currentIteration >= 3 && this.conversation.getRecentMessages(2).every(m => m.role === 'tool' && m.content.includes('继续操作的意图'))) {
+              console.error(`[AgentLoop] 连续触发继续意图，模型无工具调用意图，结束循环`)
+              this.conversation.addAssistant(fullText)
+              break
+            }
             console.error(`[AgentLoop] 检测到继续意图但无工具调用，注入提示继续`)
             this.conversation.addAssistant(fullText)
             this.conversation.addToolResult('你的上一次回复表达了继续操作的意图，但没有输出 <tool> 标签。请立即输出 <tool name="..."> 标签继续操作，不要输出任何多余文字。')
