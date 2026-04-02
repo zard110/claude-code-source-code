@@ -56,8 +56,8 @@ describe('TerminalUI', () => {
       const event: AgentEvent = { type: 'assistant_text', text: '你好' }
       ui.renderEvent(event, ctx)
       expect(ctx.lastEventType).toBe('assistant_text')
-      // assistant_text uses process.stdout.write directly
-      expect(capturedStdout).toContain('你好')
+      // assistant_text 缓冲到 displayBuffer 中
+      expect(ctx.displayBuffer).toContain('你好')
     })
 
     it('rendering tool_call 事件', () => {
@@ -112,12 +112,14 @@ describe('TerminalUI', () => {
   })
 
   describe('renderTail', () => {
-    it('assistant_text 结尾换行', () => {
+    it('assistant_text 结尾渲染 markdown', () => {
       const ctx = ui.createRenderContext()
       ctx.lastEventType = 'assistant_text'
+      ctx.displayBuffer = '你好世界'
       ui.renderTail(ctx)
-      // renderTail for assistant_text adds newline via process.stdout.write
-      expect(capturedStdout).toContain('\n')
+      // renderTail 通过 output.write 渲染缓冲的 markdown
+      const output = capturedOutput.join('')
+      expect(output).toContain('你好世界')
     })
   })
 

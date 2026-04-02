@@ -123,6 +123,11 @@ export class SpinnerManager {
     this.start(`${verb}...`, 'tool')
   }
 
+  /** 开始输出状态（缓冲 markdown 文本时） */
+  startOutput(): void {
+    this.start('生成回复...', 'tool')
+  }
+
   /** 收到一个流式 token */
   addToken(count: number = 1): void {
     this.streamingTokens += count

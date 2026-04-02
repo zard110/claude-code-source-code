@@ -4,6 +4,7 @@
  * 职责：
  * - 管理 readline 用户输入
  * - 渲染 agent 事件（spinner、thinking、tool badge、结果）
+ * - Markdown 渲染（表格、粗体、列表等）
  * - 用户确认流程
  *
  * 不包含任何 Agent 逻辑，只消费 AgentEvent
@@ -14,6 +15,7 @@ import type { AgentEvent, ConfirmFn, TokenUsage, AskUserFn, AskUserInput } from 
 import { SpinnerManager } from '../utils/spinner.js'
 import { formatToolInput, formatToolResult, highlightJson, previewBox } from '../utils/format.js'
 import { formatPlanSummary } from '../agent/plan.js'
+import { renderMarkdown } from '../utils/markdown.js'
 
 /** 格式化经过时间 */
 function formatElapsed(ms: number): string {
@@ -158,11 +160,16 @@ export class TerminalUI {
         if (ctx.displayBuffer.includes('<tool')) {
           ctx.hasToolTag = true
         } else if (ctx.hasToolTag) {
-          if (text.trim()) {
-            process.stdout.write(chalk.white(text))
-          }
+          // tool 标签之后的纯文本，不渲染（已被 core.ts 处理）
         } else {
-          process.stdout.write(chalk.white(text))
+          // 不流式输出文本，缓冲到 displayBuffer 中
+          // 在 renderTail 时统一渲染 markdown
+          // 但显示一个进度提示，让用户知道在输出
+          ctx.streamedLength += text.length
+          if (ctx.streamedLength <= text.length + 1) {
+            // 第一块：显示输出中提示
+            this.spinner.startOutput()
+          }
         }
         break
       }
@@ -178,6 +185,13 @@ export class TerminalUI {
         if (event.tool === 'ask_user') break
 
         this.spinner.stop()
+
+        // 如果之前有缓冲的文本，先渲染 markdown
+        if (ctx.displayBuffer && !ctx.hasToolTag) {
+          this.writeLine(renderMarkdown(ctx.displayBuffer))
+          ctx.displayBuffer = ''
+        }
+
         if (ctx.lastEventType === 'thinking') {
           const elapsed = formatElapsed(Date.now() - ctx.thinkingStart)
           this.writeLine(chalk.dim(`  💭 思考完成 (${elapsed})`))
@@ -237,9 +251,13 @@ export class TerminalUI {
   /** 渲染循环结束的尾部处理 */
   renderTail(ctx: RenderContext): void {
     this.spinner.stop()
-    if (ctx.lastEventType === 'assistant_text') {
-      process.stdout.write('\n')
+
+    // 渲染缓冲的 markdown 文本
+    if (ctx.displayBuffer && !ctx.hasToolTag) {
+      this.writeLine(renderMarkdown(ctx.displayBuffer))
+      ctx.displayBuffer = ''
     }
+
     if (ctx.lastEventType === 'thinking') {
       const elapsed = formatElapsed(Date.now() - ctx.thinkingStart)
       this.writeLine(chalk.dim(`  💭 思考完成 (${elapsed})`))
@@ -255,6 +273,7 @@ export class TerminalUI {
       displayBuffer: '',
       hasToolTag: false,
       tokenCount: 0,
+      streamedLength: 0,
     }
   }
 
@@ -290,4 +309,6 @@ export interface RenderContext {
   hasToolTag: boolean
   /** 当前轮次累计输出 token 估算（按字符数粗算） */
   tokenCount: number
+  /** 已流式接收的文本长度 */
+  streamedLength: number
 }
