@@ -12,10 +12,16 @@ function _d(s: string): string {
 
 const DEFAULTS: Record<string, string> = {
   AI_PROVIDER: 'centit',
+  // Centit
   CENTIT_BASE_URL: _d('aHR0cHM6Ly9jbG91ZC5jZW50aXQuY29tL2xvY29kZS9hcGkvbGx2bQ=='),
   CENTIT_API_KEY: _d('Y2VudGl0LjE='),
   CENTIT_PLANNER_MODEL: 'qwq',
   CENTIT_MODELS: 'qwq',
+  // Qwen（阿里云百炼）
+  QWEN_BASE_URL: _d('aHR0cHM6Ly9jb2RpbmcuZGFzaHNjb3BlLmFsaXl1bmNzLmNvbS92MQ=='),
+  QWEN_API_KEY: _d('c2stc3AtNjI3NDY2OTllYTk5NGNjMGJmMmI2NDE5NzA3YzA2Njg='),
+  QWEN_PLANNER_MODEL: _d('cXdlbjMuNS1wbHVz'),
+  QWEN_MODELS: _d('cXdlbjMuNS1wbHVzLGdsbS01LGdsbS00Ljcsa2ltaS1rMi41LE1pbmlNYXgtTTIuNQ=='),
 }
 
 /**
