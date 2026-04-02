@@ -13,7 +13,7 @@
 
 import type OpenAI from 'openai'
 import type { Message } from './core.js'
-import { estimateMessagesTokens, CONTEXT_WINDOW, KEEP_RECENT_TURNS } from '../utils/tokens.js'
+import { estimateMessagesTokens, estimateTokens, KEEP_RECENT_TURNS } from '../utils/tokens.js'
 
 /** 压缩后保留的消息 */
 export interface CompactResult {
@@ -134,4 +134,71 @@ export function estimateCompactSavings(messages: Message[], keepCount: number): 
   const recentTokens = estimateMessagesTokens(messages.slice(-keepCount))
   // 摘要大约 150 token
   return beforeTokens - recentTokens - 150
+}
+
+// ─── Micro-Compact ──────────────────────────────────────────
+
+/** 旧工具结果替换为的占位文本 */
+export const MICRO_COMPACT_PLACEHOLDER = '[旧工具结果已清理]'
+
+/** 默认保留最近几条工具结果 */
+const MICRO_COMPACT_KEEP_RECENT = 8
+
+export interface MicroCompactResult {
+  /** 清理后的消息列表（新数组） */
+  messages: Message[]
+  /** 被清理的工具结果数 */
+  clearedCount: number
+  /** 估算节省的 token 数 */
+  tokensSaved: number
+}
+
+/**
+ * Micro-Compact — 灵感来自 Claude Code 的 microCompact 服务
+ *
+ * 不调 API，直接把旧工具结果替换为占位文本。
+ * 毫秒级完成，零成本。在 auto-compact 之前执行。
+ *
+ * 策略：
+ * - 从后往前扫描所有 role==='tool' 的消息
+ * - 保留最后 keepRecent 条工具结果不动
+ * - 更早的工具结果 → content 替换为占位文本
+ * - user/assistant 消息永远不动
+ */
+export function microCompact(
+  messages: readonly Message[],
+  keepRecent: number = MICRO_COMPACT_KEEP_RECENT,
+): MicroCompactResult {
+  // 收集所有 tool 消息的索引
+  const toolIndices: number[] = []
+  for (let i = 0; i < messages.length; i++) {
+    if (messages[i].role === 'tool') {
+      toolIndices.push(i)
+    }
+  }
+
+  // 工具结果不够多，不需要清理
+  if (toolIndices.length <= keepRecent) {
+    return { messages: [...messages], clearedCount: 0, tokensSaved: 0 }
+  }
+
+  // 需要清理的索引（保留最后 keepRecent 条）
+  const clearFrom = toolIndices.length - keepRecent
+  const clearIndices = new Set(toolIndices.slice(0, clearFrom))
+
+  const placeholderTokens = estimateTokens(MICRO_COMPACT_PLACEHOLDER)
+  let tokensSaved = 0
+  let clearedCount = 0
+
+  const result: Message[] = messages.map((msg, i) => {
+    if (!clearIndices.has(i)) return msg
+
+    const originalTokens = estimateTokens(msg.content)
+    tokensSaved += originalTokens - placeholderTokens
+    clearedCount++
+
+    return { ...msg, content: MICRO_COMPACT_PLACEHOLDER }
+  })
+
+  return { messages: result, clearedCount, tokensSaved }
 }

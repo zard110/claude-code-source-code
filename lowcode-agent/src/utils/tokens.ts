@@ -48,6 +48,9 @@ export function getContextWindow(model: string): number {
 /** 触发自动压缩的阈值（上下文使用比例） */
 export const COMPACT_THRESHOLD = 0.8
 
+/** 触发 micro-compact 的轻量阈值（上下文使用比例） */
+export const MICRO_COMPACT_THRESHOLD = 0.6
+
 /** 触发自动压缩的消息条数阈值 */
 export const COMPACT_MESSAGE_COUNT = 50
 
@@ -71,4 +74,13 @@ export function shouldCompact(messages: readonly Message[], model?: string): boo
 export function shouldCompactByUsage(inputTokens: number, model?: string): boolean {
   const window = model ? getContextWindow(model) : DEFAULT_WINDOW
   return inputTokens > window * COMPACT_THRESHOLD
+}
+
+/**
+ * 根据 API 返回的真实 token 用量判断是否需要 micro-compact
+ * 比 auto-compact 阈值更低（0.6 vs 0.8），更早触发
+ */
+export function shouldMicroCompactByUsage(inputTokens: number, model?: string): boolean {
+  const window = model ? getContextWindow(model) : DEFAULT_WINDOW
+  return inputTokens > window * MICRO_COMPACT_THRESHOLD
 }

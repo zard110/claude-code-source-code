@@ -22,8 +22,8 @@ import { buildProjectContext } from './context.js'
 import { buildSystemPrompt } from './prompt.js'
 import type { Skill } from '../skills/types.js'
 import { extractToolCalls, cleanToolTags } from './tool-parser.js'
-import { shouldCompact, shouldCompactByUsage, estimateMessagesTokens, KEEP_RECENT_TURNS } from '../utils/tokens.js'
-import { compactMessages } from './compact.js'
+import { shouldCompact, shouldCompactByUsage, shouldMicroCompactByUsage, estimateMessagesTokens, KEEP_RECENT_TURNS } from '../utils/tokens.js'
+import { compactMessages, microCompact } from './compact.js'
 import { loadProjectMemory } from './memory.js'
 import { PlanState, planCreateSchema, buildBatchExecutionPrompt } from './plan.js'
 import type { Plan } from './plan.js'
@@ -153,6 +153,19 @@ export class Conversation {
   }
 
   /**
+   * Micro-Compact：将旧工具结果替换为占位文本
+   * 直接修改内部消息数组，不调 LLM
+   * 返回清理的工具结果数
+   */
+  applyMicroCompact(): number {
+    const result = microCompact(this.messages)
+    if (result.clearedCount === 0) return 0
+    this.messages = result.messages as Message[]
+    console.error(`[Conversation] micro-compact: 清理 ${result.clearedCount} 条旧工具结果，省约 ${result.tokensSaved} tokens`)
+    return result.clearedCount
+  }
+
+  /**
    * 压缩对话历史：保留最近 N 条，早期消息替换为摘要
    * 返回压缩掉的消息数
    */
@@ -247,6 +260,12 @@ export class AgentLoop {
     this.currentIteration = 0
     this.conversation.addUser(input)
 
+    // Micro-compact：轻量清理旧工具结果（不调 API，毫秒级）
+    const mcCleared = this.conversation.applyMicroCompact()
+    if (mcCleared > 0) {
+      yield { type: 'assistant_text', text: `\n[系统] 已清理 ${mcCleared} 条旧工具结果以节省上下文空间\n\n` }
+    }
+
     // 自动压缩：发送前检查上下文是否超限
     if (this.conversation.needsCompact()) {
       console.error('[AgentLoop] 上下文接近窗口上限，触发自动压缩...')
@@ -325,6 +344,12 @@ export class AgentLoop {
             }
           } catch (err) {
             console.error('[AgentLoop] 迭代中压缩失败:', err)
+          }
+        } else if (lastUsage && shouldMicroCompactByUsage(lastUsage.inputTokens, this.model)) {
+          // 用量未到 auto-compact 阈值但已到 micro-compact 阈值
+          const mcCleared = this.conversation.applyMicroCompact()
+          if (mcCleared > 0) {
+            console.error(`[AgentLoop] 真实用量 ${lastUsage.inputTokens} 达到 micro-compact 阈值，清理 ${mcCleared} 条旧工具结果`)
           }
         }
 
