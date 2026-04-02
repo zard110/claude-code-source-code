@@ -6,8 +6,9 @@
  */
 import chalk from 'chalk'
 import type { CommandDefinition, CommandContext } from './types.js'
-import { renderHelp, renderModelList, renderSkillsList, renderAgentsList } from './render.js'
-import { resolveLlmConfig } from '../agent/core.js'
+import { renderHelp, renderSkillsList, renderAgentsList } from './render.js'
+import { getAllModels } from './render.js'
+import { resolveLlmConfig, getDefaultModel } from '../agent/core.js'
 import { saveSession } from '../agent/persistence.js'
 
 // ─── /help ────────────────────────────────────────────
@@ -30,17 +31,54 @@ const helpCommand: CommandDefinition = {
 const modelCommand: CommandDefinition = {
   name: 'model',
   description: '查看或切换模型',
-  usage: '/model <name>',
+  usage: '/model [name]',
   category: 'model',
   async handler(ctx) {
     const newModel = ctx.args.trim()
     if (!newModel) {
-      // 列出模型
-      renderModelList(ctx.llmConfig)
+      // 交互式选择
+      const models = getAllModels()
+      const current = ctx.llmConfig.model || getDefaultModel()
+
+      // 显示列表（带编号）
+      process.stdout.write(`\n  ${chalk.cyan('当前模型:')} ${chalk.white.bold(current)}\n\n`)
+      for (let i = 0; i < models.length; i++) {
+        const m = models[i]!
+        const isCurrent = m.name === current
+        const num = chalk.dim(`${i + 1}.`)
+        const name = isCurrent ? chalk.green.bold(m.name) : chalk.white(m.name)
+        const provider = chalk.gray(`(${m.provider})`)
+        const marker = isCurrent ? chalk.green(' ←') : ''
+        process.stdout.write(`    ${num} ${name.padEnd(18)}${provider}${marker}\n`)
+      }
+      process.stdout.write(chalk.gray('\n    回车取消，或输入编号/模型名: '))
+
+      const answer = await new Promise<string>((resolve) => {
+        process.stdin.once('data', (data) => {
+          resolve(data.toString().trim())
+        })
+      })
+
+      if (!answer) {
+        process.stdout.write('\n')
+        return
+      }
+
+      // 数字选择
+      const num = parseInt(answer, 10)
+      let selected: string
+      if (!isNaN(num) && num >= 1 && num <= models.length) {
+        selected = models[num - 1]!.name
+      } else {
+        selected = answer
+      }
+
+      const newConfig = resolveLlmConfig(selected)
+      Object.assign(ctx.llmConfig, newConfig)
+      process.stdout.write(chalk.green(`\n  ✓ 已切换模型: ${chalk.white.bold(selected)}\n\n`))
     } else {
-      // 切换模型
+      // 直接指定模型名
       const newConfig = resolveLlmConfig(newModel)
-      // 用 Object.assign 更新引用，外部 index.ts 能感知到变化
       Object.assign(ctx.llmConfig, newConfig)
       process.stdout.write(chalk.green(`\n  ✓ 已切换模型: ${chalk.white.bold(newModel)}\n\n`))
     }

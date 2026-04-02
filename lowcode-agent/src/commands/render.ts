@@ -23,7 +23,7 @@ interface ModelEntry {
   provider: string
 }
 
-function getAllModels(): ModelEntry[] {
+export function getAllModels(): ModelEntry[] {
   const models: ModelEntry[] = []
   const prefixes = ['CENTIT', 'QWEN', 'DEEPSEEK', 'OPENAI']
   for (const prefix of prefixes) {
