@@ -15,12 +15,15 @@
 import OpenAI from 'openai'
 import type { ChatCompletionMessageParam, ChatCompletionChunk } from 'openai/resources/chat/completions.js'
 import { z } from 'zod'
-import type { ToolRegistry } from '../tools/registry.js'
+import { ToolRegistry } from '../tools/registry.js'
 import type { ToolContext } from '../tools/types.js'
 import type { ProjectContext } from './context.js'
 import { buildProjectContext } from './context.js'
 import { buildSystemPrompt } from './prompt.js'
 import type { Skill } from '../skills/types.js'
+import { SkillRegistry } from '../skills/registry.js'
+import { AgentRegistry } from '../agents/registry.js'
+import type { AgentDefinition } from '../agents/types.js'
 import { extractToolCalls, cleanToolTags } from './tool-parser.js'
 import { shouldCompact, shouldCompactByUsage, shouldMicroCompactByUsage, estimateMessagesTokens, KEEP_RECENT_TURNS } from '../utils/tokens.js'
 import { compactMessages, microCompact } from './compact.js'
@@ -40,6 +43,24 @@ export const askUserSchema = z.object({
 })
 
 export type AskUserInput = z.infer<typeof askUserSchema>
+
+// ─── skill 工具 Schema ──────────────────────────────────────
+
+export const skillSchema = z.object({
+  skill: z.string().describe('技能名称，如 "simplify", "create-page"'),
+  args: z.string().optional().default('').describe('传给技能的参数'),
+})
+
+export type SkillInput = z.infer<typeof skillSchema>
+
+// ─── agent 工具 Schema ──────────────────────────────────────
+
+export const agentSchema = z.object({
+  agent: z.string().describe('子代理名称，如 "page-writer", "architect"'),
+  prompt: z.string().describe('传给子代理的任务描述'),
+})
+
+export type AgentInput = z.infer<typeof agentSchema>
 
 export interface TokenUsage {
   inputTokens: number
@@ -249,6 +270,8 @@ export class AgentLoop {
   private toolRegistry: ToolRegistry
   private toolCtx: ToolContext
   private skills: Skill[]
+  private skillRegistry: SkillRegistry
+  private agentRegistry: AgentRegistry
   private options: AgentOptions
   private confirmFn?: ConfirmFn
   private askUserFn?: AskUserFn
@@ -263,16 +286,22 @@ export class AgentLoop {
     toolRegistry: ToolRegistry
     toolCtx: ToolContext
     skills?: Skill[]
+    skillRegistry?: SkillRegistry
+    agentRegistry?: AgentRegistry
     options?: AgentOptions
   }) {
     this.conversation = deps.conversation
     this.llmClient = createLlmClient(deps.options?.llmConfig)
     this.model = deps.options?.llmConfig?.model ?? getDefaultModel()
     this.skills = deps.skills ?? []
+    this.skillRegistry = deps.skillRegistry ?? new SkillRegistry()
+    this.agentRegistry = deps.agentRegistry ?? new AgentRegistry()
     this.systemPrompt = buildSystemPrompt(
       deps.conversation.projectContext,
       this.skills,
       deps.options?.projectMemory,
+      this.skillRegistry,
+      this.agentRegistry,
     )
     this.toolRegistry = deps.toolRegistry
     this.toolCtx = deps.toolCtx
@@ -289,6 +318,9 @@ export class AgentLoop {
     this.systemPrompt = buildSystemPrompt(
       this.conversation.projectContext,
       this.skills,
+      undefined,
+      this.skillRegistry,
+      this.agentRegistry,
     )
   }
 
@@ -571,6 +603,226 @@ export class AgentLoop {
                 message: answer,
               }
               this.conversation.addToolResult(`用户回答: ${answer}`)
+              continue
+            }
+
+            // ─── skill 工具特殊处理 ──────────────────────────
+            if (tc.name === 'skill') {
+              console.error('[AgentLoop] 检测到 skill 调用')
+              logToolCall(tc.name, tc.input)
+              yield { type: 'tool_call', tool: tc.name, input: tc.input }
+
+              const parsed = skillSchema.safeParse(tc.input)
+              if (!parsed.success) {
+                const errMsg = `skill 参数错误: ${parsed.error.message}`
+                yield { type: 'error', error: errMsg }
+                this.conversation.addToolResult(`错误: ${errMsg}`)
+                continue
+              }
+
+              const { skill: skillName, args: skillArgs } = parsed.data
+              const skillDef = this.skillRegistry.get(skillName)
+              if (!skillDef) {
+                const errMsg = `未知技能: ${skillName}`
+                yield { type: 'error', error: errMsg }
+                this.conversation.addToolResult(`错误: ${errMsg}。可用技能: ${this.skillRegistry.getActiveSkills().map(s => s.name).join(', ') || '无'}`)
+                continue
+              }
+
+              if (!skillDef.getPrompt) {
+                const errMsg = `技能 "${skillName}" 不支持通过工具调用`
+                yield { type: 'error', error: errMsg }
+                this.conversation.addToolResult(`错误: ${errMsg}`)
+                continue
+              }
+
+              try {
+                const prompt = await skillDef.getPrompt(skillArgs ?? '')
+                yield {
+                  type: 'tool_result',
+                  tool: tc.name,
+                  success: true,
+                  message: `技能 "${skillName}" 已加载`,
+                }
+                this.conversation.addToolResult(`技能 "${skillName}" 已激活。请按以下指令操作：\n\n${prompt}`)
+                logToolResult(tc.name, true, `Skill "${skillName}" loaded`)
+              } catch (err) {
+                const errMsg = `技能执行失败: ${err instanceof Error ? err.message : String(err)}`
+                yield { type: 'error', error: errMsg }
+                this.conversation.addToolResult(`错误: ${errMsg}`)
+              }
+              continue
+            }
+
+            // ─── agent 子代理特殊处理 ──────────────────────────
+            if (tc.name === 'agent') {
+              console.error('[AgentLoop] 检测到 agent 子代理调用')
+              logToolCall(tc.name, tc.input)
+              yield { type: 'tool_call', tool: tc.name, input: tc.input }
+
+              const parsed = agentSchema.safeParse(tc.input)
+              if (!parsed.success) {
+                const errMsg = `agent 参数错误: ${parsed.error.message}`
+                yield { type: 'error', error: errMsg }
+                this.conversation.addToolResult(`错误: ${errMsg}`)
+                continue
+              }
+
+              const { agent: agentName, prompt: agentPrompt } = parsed.data
+              const agentDef = this.agentRegistry.get(agentName)
+              if (!agentDef) {
+                const errMsg = `未知子代理: ${agentName}。可用子代理: ${this.agentRegistry.getAll().map(a => a.name).join(', ') || '无'}`
+                yield { type: 'error', error: errMsg }
+                this.conversation.addToolResult(`错误: ${errMsg}`)
+                continue
+              }
+
+              try {
+                // 创建子代理的独立对话
+                const subConversation = new Conversation(
+                  [],
+                  this.conversation.projectContext,
+                )
+                // 覆盖 system prompt 为子代理专用
+                const subSystemPrompt = agentDef.getSystemPrompt(agentPrompt)
+
+                // 过滤工具白名单
+                let subToolRegistry = this.toolRegistry
+                if (agentDef.allowedTools && agentDef.allowedTools.length > 0) {
+                  const allowed = new Set(agentDef.allowedTools)
+                  subToolRegistry = new ToolRegistry()
+                  for (const tool of this.toolRegistry.getAll()) {
+                    if (allowed.has(tool.name)) {
+                      subToolRegistry.register(tool)
+                    }
+                  }
+                }
+
+                // 创建嵌套 AgentLoop
+                const subLoop = new AgentLoop({
+                  conversation: subConversation,
+                  toolRegistry: subToolRegistry,
+                  toolCtx: this.toolCtx,
+                  options: {
+                    ...this.options,
+                    maxIterations: agentDef.maxIterations ?? 15,
+                    onProgress: (msg) => {
+                      this.onProgress?.(`[${agentName}] ${msg}`)
+                    },
+                  },
+                })
+
+                // 替换子代理的 system prompt
+                ;(subLoop as any).systemPrompt = subSystemPrompt
+
+                // 收集子代理输出
+                let subOutput = ''
+                for await (const subEvent of subLoop.sendMessage(agentPrompt)) {
+                  if (subEvent.type === 'assistant_text') {
+                    subOutput += subEvent.text
+                  } else if (subEvent.type === 'tool_result') {
+                    subOutput += `\n[${subEvent.tool}] ${subEvent.success ? '✓' : '✗'} ${subEvent.message}\n`
+                  } else if (subEvent.type === 'error') {
+                    subOutput += `\n[错误] ${subEvent.error}\n`
+                  }
+                }
+
+                yield {
+                  type: 'tool_result',
+                  tool: tc.name,
+                  success: true,
+                  message: `子代理 "${agentName}" 执行完成`,
+                }
+                this.conversation.addToolResult(`子代理 "${agentName}" 结果:\n\n${subOutput || '（无输出）'}`)
+                logToolResult(tc.name, true, `Agent "${agentName}" completed`)
+              } catch (err) {
+                const errMsg = `子代理执行失败: ${err instanceof Error ? err.message : String(err)}`
+                yield { type: 'error', error: errMsg }
+                this.conversation.addToolResult(`错误: ${errMsg}`)
+              }
+              continue
+            }
+
+            // ─── agent 子代理特殊处理 ──────────────────────────────
+            if (tc.name === 'agent') {
+              console.error('[AgentLoop] 检测到 agent 子代理调用')
+              logToolCall(tc.name, tc.input)
+              yield { type: 'tool_call', tool: tc.name, input: tc.input }
+
+              const parsed = agentSchema.safeParse(tc.input)
+              if (!parsed.success) {
+                const errMsg = `agent 参数错误: ${parsed.error.message}`
+                yield { type: 'error', error: errMsg }
+                this.conversation.addToolResult(`错误: ${errMsg}`)
+                continue
+              }
+
+              const { agent: agentName, prompt: agentPrompt } = parsed.data
+              const agentDef = this.agentRegistry.get(agentName)
+              if (!agentDef) {
+                const errMsg = `未知子代理: ${agentName}`
+                yield { type: 'error', error: errMsg }
+                this.conversation.addToolResult(`错误: ${errMsg}。可用子代理: ${this.agentRegistry.getAll().map(a => a.name).join(', ') || '无'}`)
+                continue
+              }
+
+              try {
+                // 构建子代理的 system prompt
+                const subSystemPrompt = agentDef.getSystemPrompt(agentPrompt)
+
+                // 创建子代理的 Conversation（隔离上下文）
+                const subProjectCtx = this.conversation.projectContext
+                const subConversation = new Conversation([], subProjectCtx)
+
+                // 构建子代理的工具子集
+                const subToolRegistry = new ToolRegistry()
+                const allowedTools = agentDef.allowedTools
+                for (const tool of this.toolRegistry.getAll()) {
+                  if (!allowedTools || allowedTools.includes(tool.name)) {
+                    subToolRegistry.register(tool)
+                  }
+                }
+
+                // 运行子代理
+                const subAgent = new AgentLoop({
+                  conversation: subConversation,
+                  toolRegistry: subToolRegistry,
+                  toolCtx: this.toolCtx,
+                  skillRegistry: this.skillRegistry,
+                  agentRegistry: this.agentRegistry,
+                  options: {
+                    llmConfig: this.options.llmConfig,
+                    maxIterations: agentDef.maxIterations ?? 15,
+                    maxTokens: this.maxTokens,
+                    confirmFn: this.confirmFn,
+                    askUserFn: this.askUserFn,
+                    onProgress: this.onProgress,
+                  },
+                })
+
+                // 收集子代理输出
+                let subOutput = ''
+                for await (const event of subAgent.sendMessage(agentPrompt)) {
+                  if (event.type === 'assistant_text') {
+                    subOutput += event.text
+                  } else if (event.type === 'error') {
+                    subOutput += `\n[错误] ${event.error}`
+                  }
+                }
+
+                yield {
+                  type: 'tool_result',
+                  tool: tc.name,
+                  success: !subOutput.includes('[错误]'),
+                  message: subOutput || '(子代理无输出)',
+                }
+                logToolResult(tc.name, true, `Agent "${agentName}" completed`)
+                this.conversation.addToolResult(`子代理 "${agentName}" 执行结果:\n\n${subOutput || '(无输出)'}`)
+              } catch (err) {
+                const errMsg = `子代理执行失败: ${err instanceof Error ? err.message : String(err)}`
+                yield { type: 'error', error: errMsg }
+                this.conversation.addToolResult(`错误: ${errMsg}`)
+              }
               continue
             }
 

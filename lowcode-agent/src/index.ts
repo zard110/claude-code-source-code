@@ -17,6 +17,14 @@ import { buildProjectContext, createToolContext } from './agent/context.js'
 import { AgentLoop, Conversation, resolveLlmConfig } from './agent/core.js'
 import type { Message, AgentEvent } from './agent/core.js'
 import { SkillRegistry } from './skills/registry.js'
+import { initBundledSkills } from './skills/bundled/index.js'
+import { loadFileSkills } from './skills/loader.js'
+import { AgentRegistry } from './agents/registry.js'
+import { initBundledAgents } from './agents/bundled/index.js'
+import { loadFileAgents } from './agents/registry.js'
+import { CommandRegistry } from './commands/registry.js'
+import { registerBuiltinCommands } from './commands/builtins.js'
+import type { CommandContext } from './commands/types.js'
 import { TerminalUI } from './ui/terminal.js'
 import { loadProjectMemory } from './agent/memory.js'
 import { saveSession, loadSession } from './agent/persistence.js'
@@ -56,6 +64,7 @@ async function main() {
 
   ui.showWelcome(workDir)
   console.log(chalk.gray(`  调试日志: ${getLogFilePath()}`))
+  console.log(chalk.gray(`  输入 /help 查看可用命令`))
   if (model) {
     console.log(chalk.cyan(`  模型: ${model}`))
   }
@@ -63,13 +72,55 @@ async function main() {
 
   // 创建依赖
   const toolRegistry = createDefaultRegistry()
+
+  // ─── Skills 加载 ────────────────────────────────────────
   const skillRegistry = new SkillRegistry()
+
+  // 1. 注册 bundled skills（编译内置）
+  initBundledSkills(skillRegistry)
+
+  // 2. 加载文件 skills（.skills/ 目录）
+  const skillsDir = resolve(workDir, '.skills')
+  const fileSkillCount = await loadFileSkills(skillsDir, skillRegistry)
+
+  // 3. 将 passive skills 的 tools 注入 tool registry
   skillRegistry.applyTools(toolRegistry)
+
+  const activeSkills = skillRegistry.getActiveSkills()
+  if (activeSkills.length > 0) {
+    console.log(chalk.cyan(`  已加载 ${activeSkills.length} 个技能: ${activeSkills.map(s => s.name).join(', ')}`))
+  }
+  if (fileSkillCount > 0) {
+    console.log(chalk.gray(`  包含 ${fileSkillCount} 个文件技能（来自 .skills/ 目录）`))
+  }
+
+  // ─── Agents 加载 ────────────────────────────────────────
+  const agentRegistry = new AgentRegistry()
+
+  // 1. 注册 bundled agents
+  initBundledAgents(agentRegistry)
+
+  // 2. 加载文件 agents（.agents/ 目录）
+  const agentsDir = resolve(workDir, '.agents')
+  const fileAgentCount = await loadFileAgents(agentsDir, agentRegistry)
+
+  const allAgents = agentRegistry.getAll()
+  if (allAgents.length > 0) {
+    console.log(chalk.cyan(`  已加载 ${allAgents.length} 个子代理: ${allAgents.map(a => a.name).join(', ')}`))
+  }
+  if (fileAgentCount > 0) {
+    console.log(chalk.gray(`  包含 ${fileAgentCount} 个文件子代理（来自 .agents/ 目录）`))
+  }
+
+  // ─── Commands 注册 ──────────────────────────────────────
+  const commandRegistry = new CommandRegistry()
+  registerBuiltinCommands(cmd => commandRegistry.register(cmd))
+
   const toolCtx = createToolContext(workDir)
   const projectMemory = await loadProjectMemory(workDir)
 
   // 根据 -m 参数解析 LLM 配置（自动匹配 provider 的 baseURL/apiKey）
-  const llmConfig = resolveLlmConfig(model)
+  let llmConfig = resolveLlmConfig(model)
 
   // 持久化对话历史（跨轮次保持上下文）
   const history: Message[] = fresh ? [] : await loadSession(workDir)
@@ -88,7 +139,74 @@ async function main() {
 
     logUserInput(input)
 
-    // 每轮重建 projectContext（可能有文件变化）
+    // ─── Slash 命令分发 ──────────────────────────────────
+    if (input.startsWith('/')) {
+      const cmdName = input.slice(1).split(' ')[0]
+      const cmdArgs = input.slice(1).split(' ').slice(1).join(' ')
+
+      // 1. 尝试内置命令（/help, /model, /new, /compact, /clear, /skills, /agents）
+      const projectCtx = await buildProjectContext(workDir)
+      const conversation = new Conversation(history, projectCtx)
+      const cmdCtx: CommandContext = {
+        args: cmdArgs,
+        ui,
+        history,
+        llmConfig,
+        workDir,
+        skillRegistry,
+        agentRegistry,
+        conversation,
+        commands: [],
+      }
+      const dispatched = await commandRegistry.dispatch(cmdName, cmdCtx)
+      if (dispatched) continue
+
+      // 2. 尝试 skill
+      const skillDef = skillRegistry.get(cmdName)
+      if (skillDef?.getPrompt) {
+        const prompt = await skillDef.getPrompt(cmdArgs)
+        const actualInput = `请执行技能 "${cmdName}": ${skillDef.description}\n\n${prompt}`
+        console.log(chalk.cyan(`  → 调用技能: ${cmdName}`))
+
+        const agentLoop = new AgentLoop({
+          conversation,
+          toolRegistry,
+          toolCtx,
+          skills: [],
+          skillRegistry,
+          agentRegistry,
+          options: {
+            llmConfig,
+            confirmFn: ui.getConfirmFn(),
+            askUserFn: ui.getAskUserFn(),
+            onProgress: ui.getProgressFn(),
+            projectMemory: projectMemory ?? undefined,
+          },
+        })
+
+        try {
+          const ctx = ui.createRenderContext()
+          for await (const event of agentLoop.sendMessage(actualInput)) {
+            ui.renderEvent(event, ctx)
+          }
+          ui.renderTail(ctx)
+          history.length = 0
+          history.push(...conversation.getMessages())
+          await saveSession(workDir, history)
+        } catch (err: unknown) {
+          ui.stopSpinner()
+          const msg = err instanceof Error ? err.message : String(err)
+          ui.writeLine(chalk.red(`\n  执行出错: ${msg}\n`))
+        }
+        continue
+      }
+
+      // 3. 未知命令
+      console.log(chalk.yellow(`\n  未知命令: /${cmdName}，输入 /help 查看帮助\n`))
+      continue
+    }
+
+    // ─── 普通对话 ───────────────────────────────────────
     const projectCtx = await buildProjectContext(workDir)
     const conversation = new Conversation(history, projectCtx)
 
@@ -96,7 +214,9 @@ async function main() {
       conversation,
       toolRegistry,
       toolCtx,
-      skills: skillRegistry.getAll(),
+      skills: [],
+      skillRegistry,
+      agentRegistry,
       options: {
         llmConfig,
         confirmFn: ui.getConfirmFn(),

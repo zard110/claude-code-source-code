@@ -1,24 +1,32 @@
 import type { Tool } from '../tools/types.js'
 
 /**
- * Skill interface — an extension point for adding domain-specific
- * tools and knowledge to the agent.
+ * Skill Definition — inspired by Claude Code's Command/PromptCommand pattern
  *
- * Inspired by Claude Code's Skill system:
- * - A skill can add new tools to the registry
- * - A skill can inject domain-specific instructions into the system prompt
- *
- * Example usage (future):
- *   PageSkill: adds tools for creating low-code pages + page JSON format docs
- *   ApiSkill: adds tools for creating API configs + API JSON format docs
+ * Two modes:
+ * 1. **Active skill** (has getPrompt): On-demand, invoked via <tool name="skill">
+ *    The prompt is injected into the conversation when called
+ * 2. **Passive skill** (has tools/systemPrompt): Always active,
+ *    injects tools into registry and fragments into system prompt
  */
-export interface Skill {
-  /** Unique skill name */
+export interface SkillDefinition {
+  /** Unique skill name (e.g., "simplify", "create-page") */
   name: string
-  /** Human-readable description */
+  /** Short description for LLM skill listing */
   description: string
-  /** Tools provided by this skill */
+  /** When to use this skill (shown in system prompt) */
+  whenToUse?: string
+  /** Active skill: prompt template injected on invocation */
+  getPrompt?: (args: string) => Promise<string>
+  /** Passive skill: tools added to the tool registry */
   tools?: Tool[]
-  /** System prompt fragment injected into the LLM's system prompt */
+  /** Passive skill: system prompt fragment always injected */
   systemPrompt?: string
+  /** Whether users can invoke via /skill-name (default true) */
+  userInvocable?: boolean
+  /** Where this skill was loaded from */
+  source?: 'bundled' | 'file'
 }
+
+/** Backwards-compatible alias */
+export type Skill = SkillDefinition

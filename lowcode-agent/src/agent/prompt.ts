@@ -1,5 +1,7 @@
 import type { ProjectContext } from './context.js'
 import type { Skill } from '../skills/types.js'
+import type { SkillRegistry } from '../skills/registry.js'
+import type { AgentRegistry } from '../agents/registry.js'
 
 /**
  * Build the system prompt for the LLM.
@@ -11,6 +13,8 @@ export function buildSystemPrompt(
   projectCtx: ProjectContext,
   skills: Skill[] = [],
   projectMemory?: string | null,
+  skillRegistry?: SkillRegistry,
+  agentRegistry?: AgentRegistry,
 ): string {
   const parts: string[] = []
 
@@ -98,6 +102,21 @@ JSON 参数
 </tool>
 参数：question（必填，问题文本）、options（必填，2-4 个选项）、allow_custom（可选，默认 false，是否允许用户输入自定义答案）
 
+### skill
+调用技能（Skill）。当你需要特定能力（如代码审查、页面创建向导等）时，使用此工具调用对应技能。
+<tool name="skill">
+{"skill": "simplify", "args": "检查所有页面"}
+</tool>
+参数：skill（必填，技能名称）、args（可选，传给技能的参数）
+
+### agent
+调用子代理（Sub-Agent）。当你需要将任务委托给专门的子代理执行时使用。
+子代理在独立对话中运行，有自己的 system prompt 和工具集，结果返回给你。
+<tool name="agent">
+{"agent": "page-writer", "prompt": "创建用户列表页面"}
+</tool>
+参数：agent（必填，子代理名称）、prompt（必填，任务描述）
+
 ## 工作流程
 
 1. 收到用户需求后，先用 list_files 了解项目结构
@@ -115,6 +134,7 @@ JSON 参数
 - 每次只调用一个工具，等结果再继续
 - 如果用户请求不明确，主动询问细节
 - **当用户需求不明确、有多种实现方式时，使用 ask_user 工具主动询问用户偏好，不要自行假设**
+- **当用户意图明确（如"加上"、"补上"、"添加字段"、"修改"、"要的"、"对"等），直接用工具执行操作，不要先分析再问"是否继续"或"是否添加"**
 - **不要在 <tool> 标签前输出冗长的思考文字**，直接输出 <tool> 标签即可
 - 工具调用完成后，再向用户总结操作结果，不要在调用过程中说"让我继续查看"等废话
 - **当连续执行多个工具调用时（如批量创建文件），收到工具结果后必须立即输出下一个 <tool> 标签，不要在中间输出任何文字**
@@ -130,14 +150,69 @@ JSON 参数
 
 ${projectCtx.summary}`)
 
-  // 3. Skill prompts (extension point)
+  // 3. Skill prompts (passive skills, always active)
   for (const skill of skills) {
     if (skill.systemPrompt) {
       parts.push(`## ${skill.name}\n\n${skill.systemPrompt}`)
     }
   }
 
-  // 4. Project memory (AGENT.md)
+  // 4. Active skill listing (on-demand skills from SkillRegistry)
+  if (skillRegistry) {
+    const activeSkills = skillRegistry.getActiveSkills()
+    if (activeSkills.length > 0) {
+      const skillList = activeSkills
+        .filter(s => s.userInvocable !== false)
+        .map(s => {
+          let entry = `- **${s.name}**: ${s.description}`
+          if (s.whenToUse) entry += `\n  使用场景: ${s.whenToUse}`
+          return entry
+        })
+        .join('\n')
+
+      parts.push(`## 可用技能（Skills）
+
+当用户使用 /技能名 调用，或你判断需要特定能力时，使用 skill 工具：
+
+<tool name="skill">
+{"skill": "技能名", "args": "可选参数"}
+</tool>
+
+可用技能列表：
+${skillList}
+
+调用技能后，你会收到该技能的详细指令。按照指令执行操作即可。`)
+    }
+  }
+
+  // 5. Sub-agent listing (for delegation)
+  if (agentRegistry) {
+    const agents = agentRegistry.getAll()
+    if (agents.length > 0) {
+      const agentList = agents
+        .map(a => {
+          let entry = `- **${a.name}**: ${a.description}`
+          if (a.whenToUse) entry += `\n  适用场景: ${a.whenToUse}`
+          return entry
+        })
+        .join('\n')
+
+      parts.push(`## 可用子代理（Sub-Agents）
+
+当需要将复杂任务委托给专门的子代理执行时，使用 agent 工具。子代理在独立对话中运行，有自己的 system prompt 和工具集，结果作为工具结果返回。
+
+<tool name="agent">
+{"agent": "子代理名称", "prompt": "任务描述"}
+</tool>
+
+可用子代理列表：
+${agentList}
+
+调用子代理后，子代理会在独立上下文中执行任务，完成后返回结果。`)
+    }
+  }
+
+  // 6. Project memory (AGENT.md)
   if (projectMemory) {
     parts.push(`## 项目记忆 (AGENT.md)\n\n以下是用户定义的项目约定和偏好，请遵循：\n\n${projectMemory}`)
   }

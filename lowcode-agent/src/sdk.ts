@@ -19,6 +19,11 @@ import type { AgentEvent, ConfirmFn, LlmConfig, AgentOptions, Message, AskUserFn
 import { createDefaultRegistry } from './tools/registry.js'
 import { buildProjectContext, createToolContext } from './agent/context.js'
 import { SkillRegistry } from './skills/registry.js'
+import { initBundledSkills } from './skills/bundled/index.js'
+import { loadFileSkills } from './skills/loader.js'
+import { AgentRegistry } from './agents/registry.js'
+import { initBundledAgents } from './agents/bundled/index.js'
+import { loadFileAgents } from './agents/registry.js'
 
 export type { AgentEvent, ConfirmFn, LlmConfig, AgentOptions, Message, AskUserFn, AskUserInput }
 
@@ -43,22 +48,44 @@ export interface SDKResult {
 /**
  * 创建 SDK 实例
  */
-export function createSDK(deps?: {
+export async function createSDK(deps?: {
   workDir?: string
   skills?: Array<{ name: string; description: string; systemPrompt?: string }>
   options?: AgentOptions
 }) {
   const workDir = resolve(deps?.workDir || '.')
-  const skillRegistry = new SkillRegistry()
-  for (const s of deps?.skills ?? []) {
-    skillRegistry.register(s)
-  }
 
+  // 创建 tool registry
   const toolRegistry = createDefaultRegistry()
+
+  // 创建 skill registry 并加载技能
+  const skillRegistry = new SkillRegistry()
+  initBundledSkills(skillRegistry)
+  await loadFileSkills(resolve(workDir, '.skills'), skillRegistry)
   skillRegistry.applyTools(toolRegistry)
+
+  // 创建 agent registry 并加载子代理
+  const agentRegistry = new AgentRegistry()
+  initBundledAgents(agentRegistry)
+  await loadFileAgents(resolve(workDir, '.agents'), agentRegistry)
+
   const toolCtx = createToolContext(workDir)
 
   return {
+    /**
+     * 获取已注册的技能列表
+     */
+    listSkills() {
+      return skillRegistry.getAll()
+    },
+
+    /**
+     * 获取已注册的子代理列表
+     */
+    listAgents() {
+      return agentRegistry.getAll()
+    },
+
     /**
      * 发送消息，收集所有事件后返回
      */
@@ -71,7 +98,8 @@ export function createSDK(deps?: {
         conversation,
         toolRegistry,
         toolCtx,
-        skills: skillRegistry.getAll(),
+        skillRegistry,
+        agentRegistry,
         options: deps?.options,
       })
 
@@ -131,7 +159,8 @@ export function createSDK(deps?: {
         conversation,
         toolRegistry,
         toolCtx,
-        skills: skillRegistry.getAll(),
+        skillRegistry,
+        agentRegistry,
         options: deps?.options,
       })
 

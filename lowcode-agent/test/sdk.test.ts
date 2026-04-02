@@ -17,7 +17,7 @@ describe('SDK 结构测试', () => {
 
     const tempDir = await mkdtemp(join(tmpdir(), 'lowcode-sdk-'))
     try {
-      const sdk = createSDK({ workDir: tempDir })
+      const sdk = await createSDK({ workDir: tempDir })
       expect(typeof sdk.query).toBe('function')
       expect(typeof sdk.stream).toBe('function')
     } finally {
