@@ -258,6 +258,17 @@ export class AgentLoop {
   /** 发送用户消息，启动 agent 循环 */
   async *sendMessage(input: string): AsyncGenerator<AgentEvent> {
     this.currentIteration = 0
+
+    // 任务边界标记：如果上一条是 assistant 消息，说明用户发起了新请求
+    // 注入边界提示防止模型继续旧任务
+    const msgs = this.conversation.getMessages()
+    const lastMsg = msgs[msgs.length - 1]
+    if (lastMsg && lastMsg.role === 'assistant') {
+      this.conversation.addToolResult(
+        '[系统提示] 用户发送了新请求。请只回答用户的新请求，不要继续之前未完成的任务。'
+      )
+    }
+
     this.conversation.addUser(input)
 
     // Micro-compact：轻量清理旧工具结果（不调 API，毫秒级）
