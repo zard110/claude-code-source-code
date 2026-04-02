@@ -105,6 +105,8 @@ export function createSDK(deps?: {
             break
           case 'ask_user':
             break
+          case 'system_notice':
+            break
         }
       }
 

@@ -19,11 +19,10 @@ const SPINNER_FRAMES = ['✱', '✵', '✶', '✷', '✸', '✹', '✺', '✻']
 
 // ─── 颜色 ──────────────────────────────────────────────
 
-const RED = '\x1b[31m'
-const BOLD_RED = '\x1b[1;31m'
+const BOLD_RED = '\x1b[1;31m'    // thinking 状态：红色
+const BOLD_CYAN = '\x1b[1;36m'   // 工具执行状态：青色
 const DIM = '\x1b[2m'
 const RESET = '\x1b[0m'
-const GRAY = '\x1b[38;5;244m'
 const DARK_GRAY = '\x1b[38;5;240m'
 
 // ─── 状态文本 ──────────────────────────────────────────
@@ -101,25 +100,27 @@ export class SpinnerManager {
   private lastTokenTime = 0
   private streamingTokens = 0
   private tip = ''
+  private mode: 'thinking' | 'tool' = 'thinking'
 
-  start(label: string): void {
+  start(label: string, mode: 'thinking' | 'tool' = 'thinking'): void {
     this.stop()
     this.label = label
+    this.mode = mode
     this.startTime = Date.now()
     this.lastTokenTime = Date.now()
     this.frameIdx = 0
     this.streamingTokens = 0
     this.tip = nextTip()
-    this.timer = setInterval(() => this.render(), 100)
+    this.timer = setInterval(() => this.render(), 80)
   }
 
   startThinking(): void {
-    this.start(randomItem(THINKING_VERBS) + '...')
+    this.start(randomItem(THINKING_VERBS) + '...', 'thinking')
   }
 
   startTool(toolName: string): void {
     const verb = TOOL_VERBS[toolName] ?? DEFAULT_TOOL_VERB
-    this.start(`${verb}...`)
+    this.start(`${verb}...`, 'tool')
   }
 
   /** 收到一个流式 token */
@@ -162,8 +163,10 @@ export class SpinnerManager {
       tokenPart = ` · ↓ ${formatTokens(this.streamingTokens)} tokens`
     }
 
+    // thinking 用红色，工具执行用青色
+    const frameColor = this.mode === 'tool' ? BOLD_CYAN : BOLD_RED
     const stallMark = stalled ? ' ⚠' : ''
-    const line = `${BOLD_RED}${frame}${RESET} ${this.label} (${DIM}${elapsed}${RESET}${tokenPart})${stallMark}`
+    const line = `${frameColor}${frame}${RESET} ${this.label} (${DIM}${elapsed}${RESET}${tokenPart})${stallMark}`
 
     // 提示行
     const tipLine = `${DARK_GRAY}  Tip: ${this.tip}${RESET}`

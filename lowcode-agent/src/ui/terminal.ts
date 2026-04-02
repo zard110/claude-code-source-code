@@ -167,6 +167,12 @@ export class TerminalUI {
         break
       }
 
+      case 'system_notice': {
+        this.spinner.stop()
+        this.writeLine(chalk.dim(`  ✻ ${event.text}`))
+        break
+      }
+
       case 'tool_call': {
         this.spinner.stop()
         if (ctx.lastEventType === 'thinking') {

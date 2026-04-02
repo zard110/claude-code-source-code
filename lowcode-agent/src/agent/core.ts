@@ -49,6 +49,7 @@ export interface TokenUsage {
 export type AgentEvent =
   | { type: 'thinking'; text: string }
   | { type: 'assistant_text'; text: string }
+  | { type: 'system_notice'; text: string }   // 内部系统提示，UI 用 dim 样式显示
   | { type: 'tool_call'; tool: string; input: unknown }
   | { type: 'tool_result'; tool: string; success: boolean; message: string }
   | { type: 'plan_summary'; plan: Plan }
@@ -274,7 +275,7 @@ export class AgentLoop {
     // Micro-compact：轻量清理旧工具结果（不调 API，毫秒级）
     const mcCleared = this.conversation.applyMicroCompact()
     if (mcCleared > 0) {
-      yield { type: 'assistant_text', text: `\n[系统] 已清理 ${mcCleared} 条旧工具结果以节省上下文空间\n\n` }
+      yield { type: 'system_notice', text: `已清理 ${mcCleared} 条旧工具结果以节省上下文空间` }
     }
 
     // 自动压缩：发送前检查上下文是否超限
@@ -283,7 +284,7 @@ export class AgentLoop {
       try {
         const compacted = await this.conversation.compact(this.llmClient, this.model)
         if (compacted > 0) {
-          yield { type: 'assistant_text', text: `\n[系统] 上下文已自动压缩（${compacted} 条历史消息被摘要替代）\n\n` }
+          yield { type: 'system_notice', text: `上下文已自动压缩（${compacted} 条历史消息被摘要替代）` }
         }
       } catch (err) {
         console.error('[AgentLoop] 自动压缩失败:', err)
@@ -399,7 +400,7 @@ export class AgentLoop {
           try {
             const compacted = await this.conversation.compact(this.llmClient, this.model)
             if (compacted > 0) {
-              yield { type: 'assistant_text', text: `\n[系统] 上下文已自动压缩（${compacted} 条历史消息被摘要替代）\n\n` }
+              yield { type: 'system_notice', text: `上下文已自动压缩（${compacted} 条历史消息被摘要替代）` }
             }
           } catch (err) {
             console.error('[AgentLoop] 迭代中压缩失败:', err)
