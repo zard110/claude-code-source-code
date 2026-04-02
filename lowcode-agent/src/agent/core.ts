@@ -282,6 +282,7 @@ export class AgentLoop {
   private maxTokens: number
   private currentIteration = 0
   private planState = new PlanState()
+  private compactFailed = false  // 熔断：压缩失败后不再重试
 
   constructor(deps: {
     conversation: Conversation
@@ -353,8 +354,8 @@ export class AgentLoop {
       yield { type: 'system_notice', text: `已清理 ${mcCleared} 条旧工具结果以节省上下文空间` }
     }
 
-    // 自动压缩：发送前检查上下文是否超限
-    if (this.conversation.needsCompact()) {
+    // 自动压缩：发送前检查上下文是否超限（熔断保护：失败后不再重试）
+    if (!this.compactFailed && this.conversation.needsCompact()) {
       console.error('[AgentLoop] 上下文接近窗口上限，触发自动压缩...')
       try {
         const compacted = await this.conversation.compact(this.llmClient, this.model)
@@ -363,6 +364,8 @@ export class AgentLoop {
         }
       } catch (err) {
         console.error('[AgentLoop] 自动压缩失败:', err)
+        this.compactFailed = true
+        yield { type: 'system_notice', text: '上下文压缩失败，后续可能因上下文过长而出错' }
       }
     }
 
@@ -469,8 +472,8 @@ export class AgentLoop {
 
         console.error(`[AgentLoop] 流结束: thinking=${thinkingCount}chunks content=${contentCount}chunks fullText=${fullText.length}字符 usage=${lastUsage ? `${lastUsage.inputTokens}/${lastUsage.outputTokens}` : 'N/A'}`)
 
-        // 用 API 返回的真实 token 用量检查是否需要压缩
-        if (lastUsage && shouldCompactByUsage(lastUsage.inputTokens, this.model)) {
+        // 用 API 返回的真实 token 用量检查是否需要压缩（熔断保护）
+        if (!this.compactFailed && lastUsage && shouldCompactByUsage(lastUsage.inputTokens, this.model)) {
           console.error(`[AgentLoop] 真实用量 ${lastUsage.inputTokens} 接近窗口上限，触发压缩...`)
           try {
             const compacted = await this.conversation.compact(this.llmClient, this.model)
@@ -479,6 +482,7 @@ export class AgentLoop {
             }
           } catch (err) {
             console.error('[AgentLoop] 迭代中压缩失败:', err)
+            this.compactFailed = true
           }
         } else if (lastUsage && shouldMicroCompactByUsage(lastUsage.inputTokens, this.model)) {
           // 用量未到 auto-compact 阈值但已到 micro-compact 阈值
@@ -745,89 +749,6 @@ export class AgentLoop {
               continue
             }
 
-            // ─── agent 子代理特殊处理 ──────────────────────────────
-            if (tc.name === 'agent') {
-              console.error('[AgentLoop] 检测到 agent 子代理调用')
-              logToolCall(tc.name, tc.input)
-              yield { type: 'tool_call', tool: tc.name, input: tc.input }
-
-              const parsed = agentSchema.safeParse(tc.input)
-              if (!parsed.success) {
-                const errMsg = `agent 参数错误: ${parsed.error.message}`
-                yield { type: 'error', error: errMsg }
-                this.conversation.addToolResult(`错误: ${errMsg}`)
-                continue
-              }
-
-              const { agent: agentName, prompt: agentPrompt } = parsed.data
-              const agentDef = this.agentRegistry.get(agentName)
-              if (!agentDef) {
-                const errMsg = `未知子代理: ${agentName}`
-                yield { type: 'error', error: errMsg }
-                this.conversation.addToolResult(`错误: ${errMsg}。可用子代理: ${this.agentRegistry.getAll().map(a => a.name).join(', ') || '无'}`)
-                continue
-              }
-
-              try {
-                // 构建子代理的 system prompt
-                const subSystemPrompt = agentDef.getSystemPrompt(agentPrompt)
-
-                // 创建子代理的 Conversation（隔离上下文）
-                const subProjectCtx = this.conversation.projectContext
-                const subConversation = new Conversation([], subProjectCtx)
-
-                // 构建子代理的工具子集
-                const subToolRegistry = new ToolRegistry()
-                const allowedTools = agentDef.allowedTools
-                for (const tool of this.toolRegistry.getAll()) {
-                  if (!allowedTools || allowedTools.includes(tool.name)) {
-                    subToolRegistry.register(tool)
-                  }
-                }
-
-                // 运行子代理
-                const subAgent = new AgentLoop({
-                  conversation: subConversation,
-                  toolRegistry: subToolRegistry,
-                  toolCtx: this.toolCtx,
-                  skillRegistry: this.skillRegistry,
-                  agentRegistry: this.agentRegistry,
-                  options: {
-                    llmConfig: this.options.llmConfig,
-                    maxIterations: agentDef.maxIterations ?? 15,
-                    maxTokens: this.maxTokens,
-                    confirmFn: this.confirmFn,
-                    askUserFn: this.askUserFn,
-                    onProgress: this.onProgress,
-                  },
-                })
-
-                // 收集子代理输出
-                let subOutput = ''
-                for await (const event of subAgent.sendMessage(agentPrompt)) {
-                  if (event.type === 'assistant_text') {
-                    subOutput += event.text
-                  } else if (event.type === 'error') {
-                    subOutput += `\n[错误] ${event.error}`
-                  }
-                }
-
-                yield {
-                  type: 'tool_result',
-                  tool: tc.name,
-                  success: !subOutput.includes('[错误]'),
-                  message: subOutput || '(子代理无输出)',
-                }
-                logToolResult(tc.name, true, `Agent "${agentName}" completed`)
-                this.conversation.addToolResult(`子代理 "${agentName}" 执行结果:\n\n${subOutput || '(无输出)'}`)
-              } catch (err) {
-                const errMsg = `子代理执行失败: ${err instanceof Error ? err.message : String(err)}`
-                yield { type: 'error', error: errMsg }
-                this.conversation.addToolResult(`错误: ${errMsg}`)
-              }
-              continue
-            }
-
             // ─── 常规工具处理 ──────────────────────────────────
             yield { type: 'tool_call', tool: tc.name, input: tc.input }
             logToolCall(tc.name, tc.input)
@@ -919,7 +840,9 @@ export class AgentLoop {
 
 
           const isShortWithoutTool = fullText.length < 300 && fullText.length > 0 && !hasCompletionMark && hasActionSignal
-          if (isShortWithoutTool && this.currentIteration < this.maxIterations) {
+          // 只在之前已经调过工具时才启用"继续意图"启发
+          // 第一轮迭代（纯对话回复）不应触发，避免"你好"被误判为继续意图
+          if (isShortWithoutTool && this.currentIteration > 1 && this.currentIteration < this.maxIterations) {
             // 防死循环：如果连续 2 次触发继续意图，说明模型确实没打算调工具
             if (this.currentIteration >= 3 && this.conversation.getRecentMessages(2).every(m => m.role === 'tool' && m.content.includes('继续操作的意图'))) {
               console.error(`[AgentLoop] 连续触发继续意图，模型无工具调用意图，结束循环`)

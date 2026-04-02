@@ -56,8 +56,8 @@ export const COMPACT_THRESHOLD = 0.8
 /** 触发 micro-compact 的轻量阈值（上下文使用比例） */
 export const MICRO_COMPACT_THRESHOLD = 0.6
 
-/** 触发自动压缩的消息条数阈值 */
-export const COMPACT_MESSAGE_COUNT = 50
+/** 触发自动压缩的消息条数阈值（条数兜底，避免估算不准时遗漏） */
+export const COMPACT_MESSAGE_COUNT = 100
 
 /** 压缩时保留最近几轮对话（每轮 = user + assistant，所以 *2） */
 export const KEEP_RECENT_TURNS = 4

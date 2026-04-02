@@ -2,16 +2,19 @@
  * Terminal UI — 终端显示层
  *
  * 职责：
- * - 管理 readline 用户输入
+ * - 用户输入（clack text + autocomplete，模型名提示符）
  * - 渲染 agent 事件（spinner、thinking、tool badge、结果）
  * - Markdown 渲染（表格、粗体、列表等）
- * - 用户确认流程
+ * - 用户确认/选择流程（clack）
  *
  * 不包含任何 Agent 逻辑，只消费 AgentEvent
  */
 import * as readline from 'node:readline'
+import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { resolve, dirname } from 'node:path'
 import chalk from 'chalk'
-import type { AgentEvent, ConfirmFn, TokenUsage, AskUserFn, AskUserInput } from '../agent/core.js'
+import * as clack from '@clack/prompts'
+import type { AgentEvent, ConfirmFn, AskUserFn, AskUserInput } from '../agent/core.js'
 import { SpinnerManager } from '../utils/spinner.js'
 import { formatToolInput, formatToolResult, highlightJson, previewBox } from '../utils/format.js'
 import { formatPlanSummary } from '../agent/plan.js'
@@ -28,108 +31,201 @@ function formatElapsed(ms: number): string {
   return `${hr}h ${min % 60}m`
 }
 
+// ─── 命令补全项 ──────────────────────────────────────────
+
+export interface CompletionItem {
+  name: string
+  description: string
+}
+
+// ─── TerminalUI ─────────────────────────────────────────
+
 export class TerminalUI {
   private spinner = new SpinnerManager()
-  private rl: readline.Interface
+  private completionItems: CompletionItem[] = []
+  private inputHistory: string[] = []
+  private modelName = ''
+  private historyFile = ''
+  private ctrlCCount = 0
+  private ctrlCTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(
     private input: NodeJS.ReadableStream = process.stdin,
     private output: NodeJS.WritableStream = process.stdout,
-  ) {
-    this.rl = readline.createInterface({
-      input: this.input as any,
-      output: this.output as any,
-    })
+  ) {}
+
+  /** 设置补全候选 */
+  setCompletions(items: CompletionItem[]): void {
+    this.completionItems = items
   }
 
-  /** 等待用户输入 */
-  promptUser(): Promise<string> {
-    return new Promise((resolve) => {
-      this.rl.question(chalk.green.bold('> '), (answer) => resolve(answer.trim()))
-    })
+  /** 设置当前模型名 */
+  setModelName(name: string): void {
+    this.modelName = name
+  }
+
+  /** 加载历史文件 */
+  async initHistory(filePath: string): Promise<void> {
+    this.historyFile = filePath
+    try {
+      await mkdir(dirname(filePath), { recursive: true })
+      const content = await readFile(filePath, 'utf-8')
+      if (content.trim()) {
+        this.inputHistory = content.split('\n').filter(l => l.trim()).reverse()
+      }
+    } catch {
+      this.inputHistory = []
+    }
+  }
+
+  /** 保存历史到文件 */
+  async saveHistory(): Promise<void> {
+    if (!this.historyFile) return
+    try {
+      await mkdir(dirname(this.historyFile), { recursive: true })
+      const lines = this.inputHistory.slice().reverse().join('\n')
+      await writeFile(this.historyFile, lines, 'utf-8')
+    } catch { /* silent */ }
+  }
+
+  /** 提示符文本 */
+  private promptMsg(): string {
+    return this.modelName ? `> [${this.modelName}]` : '>'
+  }
+
+  /**
+   * 等待用户输入
+   *
+   * 使用 clack.text 做普通输入，clack.autocomplete 做 / 命令补全。
+   * 所有 raw mode / ANSI 处理由 clack 负责，不自己造轮子。
+   */
+  async promptUser(): Promise<string> {
+    while (true) {
+      const result = await clack.text({
+        message: this.promptMsg(),
+        placeholder: '输入消息，/ 查看命令',
+        validate: (v) => {
+          if (v === '__exit__') return ''
+          return undefined
+        },
+      })
+
+      // Ctrl+C 处理
+      if (clack.isCancel(result)) {
+        this.ctrlCCount++
+        if (this.ctrlCCount >= 2) {
+          this.ctrlCCount = 0
+          if (this.ctrlCTimer) clearTimeout(this.ctrlCTimer)
+          return ''  // 退出
+        }
+        clack.log.warn('再按一次 Ctrl+C 退出（或输入 exit）')
+        if (this.ctrlCTimer) clearTimeout(this.ctrlCTimer)
+        this.ctrlCTimer = setTimeout(() => { this.ctrlCCount = 0 }, 2000)
+        continue
+      }
+
+      this.ctrlCCount = 0
+
+      let input = (result as string).trim()
+
+      // 空输入 → 继续
+      if (!input) continue
+
+      // / 命令 → 用 autocomplete 让用户选择
+      if (input.startsWith('/')) {
+        // 先看看是不是直接匹配某个命令
+        const directMatch = this.completionItems.find(
+          c => c.name === input || c.name === input.split(' ')[0]
+        )
+        if (directMatch) {
+          // 直接匹配，保留完整输入（可能带参数）
+          this.pushHistory(input)
+          return input
+        }
+
+        // 不完整命令 → 弹出 autocomplete
+        const slashResult = await clack.autocomplete({
+          message: '选择命令',
+          options: this.completionItems.map(c => ({
+            label: c.name,
+            value: c.name,
+            hint: c.description,
+          })),
+          initialValue: input,
+        })
+
+        if (clack.isCancel(slashResult)) continue
+
+        const selected = slashResult as string
+        // 可能还有后续参数
+        const parts = input.split(' ')
+        const extraArgs = parts.length > 1 ? ' ' + parts.slice(1).join(' ') : ''
+        const finalInput = selected + extraArgs
+        this.pushHistory(finalInput)
+        return finalInput
+      }
+
+      // 普通输入
+      this.pushHistory(input)
+      return input
+    }
+  }
+
+  private pushHistory(item: string): void {
+    this.inputHistory = [item, ...this.inputHistory.filter(h => h !== item)].slice(0, 200)
   }
 
   /** 显示欢迎信息 */
   showWelcome(workDir: string): void {
     this.write(chalk.cyan.bold('\n  低代码 JSON Agent'))
     this.write(chalk.gray(`  工作目录: ${workDir}`))
-    this.write(chalk.gray('  输入需求，Enter 发送。输入 exit 退出。\n'))
+    this.write(chalk.gray('  输入需求，Enter 发送。/ 查看命令，exit 退出。\n'))
   }
 
   /** 显示告别 */
   showGoodbye(): void {
     this.write(chalk.gray('\n  再见！'))
-    this.rl.close()
   }
 
-  /** 获取确认回调函数（注入到 AgentCore） */
+  /** 获取确认回调函数 */
   getConfirmFn(): ConfirmFn {
     return async (tool: string, description: string, preview?: string) => {
       this.spinner.stop()
-      this.write('')
-      this.write(chalk.yellow(`  ⚠ 需要确认: ${description}`))
-
       if (preview) {
-        this.write(previewBox(tool, highlightJson(preview, 15)))
+        this.writeLine('')
+        this.writeLine(previewBox(tool, highlightJson(preview, 15)))
       }
-
-      const confirmed = await this.askConfirm('确认执行?')
-      this.write(confirmed ? chalk.green('  ✓ 已确认') : chalk.red('  ✗ 已拒绝'))
-      this.write('')
-      return confirmed
+      const result = await clack.confirm({ message: `⚠ ${description}` })
+      if (clack.isCancel(result)) return false
+      return result as boolean
     }
   }
 
-  /** 获取工具执行进度回调函数（注入到 AgentCore） */
+  /** 获取进度回调 */
   getProgressFn(): (message: string) => void {
-    return (message: string) => {
-      this.spinner.update(message)
-    }
+    return (message: string) => { this.spinner.update(message) }
   }
 
-  /** 获取用户提问回调函数（注入到 AgentCore） */
+  /** 获取用户提问回调 */
   getAskUserFn(): AskUserFn {
     return async (question: AskUserInput): Promise<string> => {
       this.spinner.stop()
-      this.write('')
-      this.write(chalk.cyan.bold(`  ❓ ${question.question}`))
-
-      question.options.forEach((opt, i) => {
-        this.write(chalk.white(`    ${i + 1}. ${opt}`))
-      })
-
+      const options = question.options.map((opt) => ({ label: opt, value: opt }))
       if (question.allow_custom) {
-        this.write(chalk.gray('    0. 自定义输入'))
+        options.push({ label: '自定义输入...', value: '__custom__' })
       }
-
-      const answer = await new Promise<string>((resolve) => {
-        this.rl.question(chalk.green('  请选择: '), (input) => {
-          const choice = input.trim()
-          const num = parseInt(choice, 10)
-
-          if (!isNaN(num)) {
-            if (num >= 1 && num <= question.options.length) {
-              resolve(question.options[num - 1])
-            } else if (num === 0 && question.allow_custom) {
-              this.rl.question(chalk.green('  请输入: '), (custom) => {
-                resolve(custom.trim() || question.options[0])
-              })
-            } else {
-              resolve(choice)
-            }
-          } else {
-            resolve(choice)
-          }
-        })
-      })
-
-      this.write(chalk.green(`  ✓ 已选择: ${answer}`))
-      this.write('')
-      return answer
+      const result = await clack.select({ message: question.question, options })
+      if (clack.isCancel(result)) return question.options[0] ?? ''
+      if (result === '__custom__') {
+        const custom = await clack.text({ message: '请输入' })
+        if (clack.isCancel(custom)) return question.options[0] ?? ''
+        return custom as string
+      }
+      return result as string
     }
   }
 
-  /** 渲染一个 agent 事件的完整循环 */
+  /** 渲染 agent 事件 */
   renderEvent(event: AgentEvent, ctx: RenderContext): void {
     switch (event.type) {
       case 'thinking': {
@@ -138,12 +234,10 @@ export class TerminalUI {
           ctx.tokenCount = 0
           this.spinner.startThinking()
         }
-        // 粗略估算 thinking token（按字符数）
         ctx.tokenCount += event.text.length
         this.spinner.addToken(event.text.length)
         break
       }
-
       case 'assistant_text': {
         if (ctx.lastEventType === 'thinking') {
           this.spinner.stop()
@@ -151,70 +245,52 @@ export class TerminalUI {
           this.writeLine(chalk.dim(`  💭 思考完成 (${elapsed}s)`))
           this.writeLine('')
         }
-
         const text = event.text
         ctx.displayBuffer += text
-        // 粗略估算输出 token
         ctx.tokenCount += text.length
-
         if (ctx.displayBuffer.includes('<tool')) {
           ctx.hasToolTag = true
         } else if (ctx.hasToolTag) {
-          // tool 标签之后的纯文本，不渲染（已被 core.ts 处理）
+          // skip
         } else {
-          // 不流式输出文本，缓冲到 displayBuffer 中
-          // 在 renderTail 时统一渲染 markdown
-          // 但显示一个进度提示，让用户知道在输出
           ctx.streamedLength += text.length
           if (ctx.streamedLength <= text.length + 1) {
-            // 第一块：显示输出中提示
             this.spinner.startOutput()
           }
         }
         break
       }
-
       case 'system_notice': {
         this.spinner.stop()
         this.writeLine(chalk.dim(`  ✻ ${event.text}`))
         break
       }
-
       case 'tool_call': {
-        // ask_user 的 tool_call 由 askUserFn 回调处理显示，跳过避免重复
         if (event.tool === 'ask_user') break
-
         this.spinner.stop()
-
-        // 如果之前有缓冲的文本，先渲染 markdown
         if (ctx.displayBuffer && !ctx.hasToolTag) {
           this.writeLine(renderMarkdown(ctx.displayBuffer))
           ctx.displayBuffer = ''
         }
-
         if (ctx.lastEventType === 'thinking') {
-          const elapsed = formatElapsed(Date.now() - ctx.thinkingStart)
-          this.writeLine(chalk.dim(`  💭 思考完成 (${elapsed})`))
+          this.writeLine(chalk.dim(`  💭 思考完成 (${formatElapsed(Date.now() - ctx.thinkingStart)})`))
         }
         if (ctx.lastEventType === 'assistant_text' || ctx.lastEventType === 'thinking') {
           process.stdout.write('\n')
         }
         ctx.hasToolTag = false
         ctx.displayBuffer = ''
-
         this.writeLine('')
         this.writeLine(formatToolInput(event.tool, event.input))
         this.spinner.startTool(event.tool)
         break
       }
-
       case 'tool_result': {
         this.spinner.stop()
         this.writeLine(formatToolResult(event.tool, event.success, event.message))
         this.writeLine('')
         break
       }
-
       case 'plan_summary': {
         this.spinner.stop()
         this.writeLine('')
@@ -223,19 +299,13 @@ export class TerminalUI {
         this.writeLine('')
         break
       }
-
-      case 'ask_user': {
-        // ask_user 的显示和交互由 askUserFn 回调处理，跳过避免重复
-        break
-      }
-
+      case 'ask_user': break
       case 'error': {
         this.spinner.stop()
         this.writeLine(chalk.red(`  ⚠ ${event.error}`))
         this.writeLine('')
         break
       }
-
       case 'turn_end': {
         if (event.usage) {
           const { inputTokens, outputTokens } = event.usage
@@ -248,58 +318,26 @@ export class TerminalUI {
     ctx.lastEventType = event.type
   }
 
-  /** 渲染循环结束的尾部处理 */
   renderTail(ctx: RenderContext): void {
     this.spinner.stop()
-
-    // 渲染缓冲的 markdown 文本
     if (ctx.displayBuffer && !ctx.hasToolTag) {
       this.writeLine(renderMarkdown(ctx.displayBuffer))
       ctx.displayBuffer = ''
     }
-
     if (ctx.lastEventType === 'thinking') {
-      const elapsed = formatElapsed(Date.now() - ctx.thinkingStart)
-      this.writeLine(chalk.dim(`  💭 思考完成 (${elapsed})`))
+      this.writeLine(chalk.dim(`  💭 思考完成 (${formatElapsed(Date.now() - ctx.thinkingStart)})`))
     }
     this.writeLine('')
   }
 
-  /** 创建新的渲染上下文 */
   createRenderContext(): RenderContext {
-    return {
-      lastEventType: '',
-      thinkingStart: 0,
-      displayBuffer: '',
-      hasToolTag: false,
-      tokenCount: 0,
-      streamedLength: 0,
-    }
+    return { lastEventType: '', thinkingStart: 0, displayBuffer: '', hasToolTag: false, tokenCount: 0, streamedLength: 0 }
   }
 
-  /** 停止 spinner */
-  stopSpinner(): void {
-    this.spinner.stop()
-  }
+  stopSpinner(): void { this.spinner.stop() }
 
-  // ─── 内部方法 ──────────────────────────────────────────
-
-  private write(text: string): void {
-    this.output.write(text + '\n')
-  }
-
-  /** 输出一行文本 */
-  writeLine(text: string): void {
-    this.output.write(text + '\n')
-  }
-
-  private askConfirm(question: string): Promise<boolean> {
-    return new Promise((resolve) => {
-      this.rl.question(chalk.yellow(`  ${question} (y/n): `), (answer) => {
-        resolve(answer.trim().toLowerCase() === 'y')
-      })
-    })
-  }
+  private write(text: string): void { this.output.write(text + '\n') }
+  writeLine(text: string): void { this.output.write(text + '\n') }
 }
 
 export interface RenderContext {
@@ -307,8 +345,6 @@ export interface RenderContext {
   thinkingStart: number
   displayBuffer: string
   hasToolTag: boolean
-  /** 当前轮次累计输出 token 估算（按字符数粗算） */
   tokenCount: number
-  /** 已流式接收的文本长度 */
   streamedLength: number
 }

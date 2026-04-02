@@ -9,7 +9,7 @@
  * - 主循环
  */
 import { config } from 'dotenv'
-import { resolve } from 'node:path'
+import { resolve, join } from 'node:path'
 import { existsSync } from 'node:fs'
 import chalk from 'chalk'
 
@@ -37,6 +37,7 @@ import { CommandRegistry } from './commands/registry.js'
 import { registerBuiltinCommands } from './commands/builtins.js'
 import type { CommandContext } from './commands/types.js'
 import { TerminalUI } from './ui/terminal.js'
+import type { CompletionItem } from './ui/terminal.js'
 import { loadProjectMemory } from './agent/memory.js'
 import { saveSession, loadSession } from './agent/persistence.js'
 import { initLogger, getLogFilePath, logUserInput } from './utils/logger.js'
@@ -127,11 +128,24 @@ async function main() {
   const commandRegistry = new CommandRegistry()
   registerBuiltinCommands(cmd => commandRegistry.register(cmd))
 
+  // 设置 / 命令补全候选（带描述）
+  ui.setCompletions([
+    ...commandRegistry.getAll().map(c => ({ name: `/${c.name}`, description: c.description })),
+    ...activeSkills.map(s => ({ name: `/${s.name}`, description: s.description })),
+    ...allAgents.map(a => ({ name: `/${a.name}`, description: a.description })),
+  ])
+
   const toolCtx = createToolContext(workDir)
   const projectMemory = await loadProjectMemory(workDir)
 
   // 根据 -m 参数解析 LLM 配置（自动匹配 provider 的 baseURL/apiKey）
   let llmConfig = resolveLlmConfig(model)
+
+  // 初始化历史记录（持久化到 .agent/history）
+  const { getDefaultModel } = await import('./agent/core.js')
+  const currentModel = llmConfig.model || getDefaultModel()
+  ui.setModelName(currentModel)
+  await ui.initHistory(resolve(workDir, '.agent', 'history'))
 
   // 持久化对话历史（跨轮次保持上下文）
   const history: Message[] = fresh ? [] : await loadSession(workDir)
@@ -144,6 +158,7 @@ async function main() {
     const input = await ui.promptUser()
 
     if (!input || input.toLowerCase() === 'exit' || input.toLowerCase() === 'quit') {
+      await ui.saveHistory()
       ui.showGoodbye()
       break
     }
@@ -152,6 +167,23 @@ async function main() {
 
     // ─── Slash 命令分发 ──────────────────────────────────
     if (input.startsWith('/')) {
+      // 只输入 `/` → 显示快捷命令列表
+      if (input === '/') {
+        const cmds = commandRegistry.getAll()
+        console.log('')
+        for (const cmd of cmds) {
+          console.log(`  ${chalk.white.bold('/' + cmd.name.padEnd(16))}${chalk.gray(cmd.description)}`)
+        }
+        for (const s of activeSkills) {
+          console.log(`  ${chalk.cyan('/' + s.name.padEnd(16))}${chalk.gray(s.description)}`)
+        }
+        for (const a of allAgents) {
+          console.log(`  ${chalk.yellow('/' + a.name.padEnd(16))}${chalk.gray(a.description)}`)
+        }
+        console.log('')
+        continue
+      }
+
       const cmdName = input.slice(1).split(' ')[0]
       const cmdArgs = input.slice(1).split(' ').slice(1).join(' ')
 
@@ -170,7 +202,11 @@ async function main() {
         commands: [],
       }
       const dispatched = await commandRegistry.dispatch(cmdName, cmdCtx)
-      if (dispatched) continue
+      if (dispatched) {
+        // 命令可能修改了 llmConfig.model，同步到 UI 提示符
+        if (llmConfig.model) ui.setModelName(llmConfig.model)
+        continue
+      }
 
       // 2. 尝试 skill
       const skillDef = skillRegistry.get(cmdName)

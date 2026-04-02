@@ -10,6 +10,7 @@ import { renderHelp, renderSkillsList, renderAgentsList } from './render.js'
 import { getAllModels } from './render.js'
 import { resolveLlmConfig, getDefaultModel } from '../agent/core.js'
 import { saveSession } from '../agent/persistence.js'
+import { select, clack } from '../utils/select.js'
 
 // ─── /help ────────────────────────────────────────────
 
@@ -36,46 +37,33 @@ const modelCommand: CommandDefinition = {
   async handler(ctx) {
     const newModel = ctx.args.trim()
     if (!newModel) {
-      // 交互式选择
+      // 交互式选择（上下箭头 + 回车）
       const models = getAllModels()
       const current = ctx.llmConfig.model || getDefaultModel()
 
-      // 显示列表（带编号）
-      process.stdout.write(`\n  ${chalk.cyan('当前模型:')} ${chalk.white.bold(current)}\n\n`)
-      for (let i = 0; i < models.length; i++) {
-        const m = models[i]!
-        const isCurrent = m.name === current
-        const num = chalk.dim(`${i + 1}.`)
-        const name = isCurrent ? chalk.green.bold(m.name) : chalk.white(m.name)
-        const provider = chalk.gray(`(${m.provider})`)
-        const marker = isCurrent ? chalk.green(' ←') : ''
-        process.stdout.write(`    ${num} ${name.padEnd(18)}${provider}${marker}\n`)
-      }
-      process.stdout.write(chalk.gray('\n    回车取消，或输入编号/模型名: '))
-
-      const answer = await new Promise<string>((resolve) => {
-        process.stdin.once('data', (data) => {
-          resolve(data.toString().trim())
-        })
-      })
-
-      if (!answer) {
-        process.stdout.write('\n')
+      if (models.length === 0) {
+        clack.log.warn('暂无可用模型')
         return
       }
 
-      // 数字选择
-      const num = parseInt(answer, 10)
-      let selected: string
-      if (!isNaN(num) && num >= 1 && num <= models.length) {
-        selected = models[num - 1]!.name
-      } else {
-        selected = answer
+      const selected = await select<string>(
+        `选择模型 (当前: ${current})`,
+        models.map(m => ({
+          label: m.name === current ? `${m.name}  ← 当前` : m.name,
+          value: m.name,
+          hint: m.provider,
+        })),
+        { defaultValue: current },
+      )
+
+      if (!selected) {
+        clack.log.info('已取消')
+        return
       }
 
       const newConfig = resolveLlmConfig(selected)
       Object.assign(ctx.llmConfig, newConfig)
-      process.stdout.write(chalk.green(`\n  ✓ 已切换模型: ${chalk.white.bold(selected)}\n\n`))
+      clack.log.success(`已切换模型: ${chalk.bold(selected)}`)
     } else {
       // 直接指定模型名
       const newConfig = resolveLlmConfig(newModel)

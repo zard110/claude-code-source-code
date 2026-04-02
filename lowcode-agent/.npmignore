@@ -1,0 +1,31 @@
+# 源码和开发文件
+src/
+test/
+*.test.ts
+vitest.config.ts
+vitest.real.config.ts
+tsconfig.json
+tsconfig.build.json
+
+# 环境和密钥（重要！）
+.env
+.env.local
+.env.*
+!.env.example
+
+# 开发工具
+.claude/
+demo/
+logs/
+debug.log
+node_modules/
+
+# 锁文件
+package-lock.json
+pnpm-lock.yaml
+
+# 其他
+.git/
+.gitignore
+.claude/
+*.map

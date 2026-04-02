@@ -84,8 +84,8 @@ describe('shouldCompact', () => {
   })
 
   it('消息条数超过阈值时需要压缩', () => {
-    // 即使每条消息很短，超过 50 条也触发压缩
-    const messages: Message[] = Array.from({ length: 51 }, (_, i) => ({
+    // 即使每条消息很短，超过 100 条也触发压缩
+    const messages: Message[] = Array.from({ length: 101 }, (_, i) => ({
       role: (i % 2 === 0 ? 'user' : 'assistant') as Message['role'],
       content: 'hi',
     }))

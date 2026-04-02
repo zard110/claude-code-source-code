@@ -43,7 +43,7 @@ const COMPACT_PROMPT = `请总结以下对话历史的关键信息，用于后�
 
 `
 
-/** 调用 LLM 生成对话摘要 */
+/** 调用 LLM 生成对话摘要（带 30s 超时保护） */
 export async function generateSummary(
   llmClient: OpenAI,
   messages: Message[],
@@ -53,15 +53,20 @@ export async function generateSummary(
     `[${m.role === 'user' ? '用户' : m.role === 'assistant' ? '助手' : '工具结果'}] ${m.content}`
   ).join('\n\n')
 
-  const response = await llmClient.chat.completions.create({
-    model,
-    messages: [
-      { role: 'system', content: COMPACT_PROMPT },
-      { role: 'user', content: conversationText },
-    ],
-    max_tokens: 500,
-    stream: false,
-  })
+  const response = await Promise.race([
+    llmClient.chat.completions.create({
+      model,
+      messages: [
+        { role: 'system', content: COMPACT_PROMPT },
+        { role: 'user', content: conversationText },
+      ],
+      max_tokens: 500,
+      stream: false,
+    }),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('摘要生成超时 (30s)')), 30_000)
+    ),
+  ])
 
   return response.choices[0]?.message?.content?.trim() ?? '（摘要生成失败）'
 }

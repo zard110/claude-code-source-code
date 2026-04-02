@@ -1,3 +1,12 @@
 node_modules/
 build-src/
 dist/
+.env.local
+.env
+*.log
+logs/
+demo/
+debug.log
+package-lock.json
+pnpm-lock.yaml
+.claude/

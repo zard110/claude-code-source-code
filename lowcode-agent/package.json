@@ -1,17 +1,46 @@
 {
-  "name": "lowcode-agent",
-  "version": "0.1.0",
-  "description": "A code agent for creating and modifying low-code JSON files (pages + APIs)",
+  "name": "@centit/locode",
+  "version": "0.2.0",
+  "description": "AI-powered low-code JSON agent — create pages and APIs via natural language",
   "type": "module",
+  "bin": {
+    "locode": "./dist/index.js",
+    "lc": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    ".env.example",
+    "README.md"
+  ],
   "scripts": {
     "dev": "tsx src/index.ts",
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run build",
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:real": "vitest run --config vitest.real.config.ts"
   },
+  "keywords": [
+    "lowcode",
+    "low-code",
+    "ai-agent",
+    "json-editor",
+    "cli",
+    "page-builder",
+    "api-builder"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": ""
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
+    "@clack/prompts": "^1.2.0",
     "chalk": "^5.3.0",
     "dotenv": "^17.3.1",
     "openai": "^6.33.0",
