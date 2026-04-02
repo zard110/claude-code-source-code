@@ -11,7 +11,7 @@ function _d(s: string): string {
 }
 
 const DEFAULTS: Record<string, string> = {
-  AI_PROVIDER: 'centit',
+  AI_PROVIDER: 'qwen',
   // Centit
   CENTIT_BASE_URL: _d('aHR0cHM6Ly9jbG91ZC5jZW50aXQuY29tL2xvY29kZS9hcGkvbGx2bQ=='),
   CENTIT_API_KEY: _d('Y2VudGl0LjE='),

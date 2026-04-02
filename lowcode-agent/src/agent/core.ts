@@ -208,10 +208,11 @@ export class Conversation {
 // ─── LLM 客户端工厂 ──────────────────────────────────────
 
 export function createLlmClient(config?: Partial<LlmConfig>): OpenAI {
+  const provider = (process.env.AI_PROVIDER || 'qwen').toUpperCase()
   return new OpenAI({
-    baseURL: config?.baseURL || process.env.CENTIT_BASE_URL,
-    apiKey: config?.apiKey || process.env.CENTIT_API_KEY,
-    timeout: 60_000, // 60s 超时，防止网络故障挂死 agent
+    baseURL: config?.baseURL || process.env[`${provider}_BASE_URL`] || process.env.CENTIT_BASE_URL,
+    apiKey: config?.apiKey || process.env[`${provider}_API_KEY`] || process.env.CENTIT_API_KEY,
+    timeout: 60_000,
   })
 }
 
@@ -219,10 +220,11 @@ export function getDefaultModel(provider?: string): string {
   // 如果指定了 provider，使用该 provider 的 PLANNER_MODEL
   if (provider) {
     const providerUpper = provider.toUpperCase()
-    return process.env[`${providerUpper}_PLANNER_MODEL`] || 'gpt-4o'
+    return process.env[`${providerUpper}_PLANNER_MODEL`] || process.env[`${providerUpper}_MODELS`]?.split(',')[0] || 'qwen3.5-plus'
   }
-  // 否则使用默认的 CENTIT_PROVIDER
-  return process.env.CENTIT_PLANNER_MODEL || process.env.CENTIT_MODELS?.split(',')[0] || 'gpt-4o'
+  // 按 AI_PROVIDER 决定默认模型
+  const aiProvider = (process.env.AI_PROVIDER || 'qwen').toUpperCase()
+  return process.env[`${aiProvider}_PLANNER_MODEL`] || process.env[`${aiProvider}_MODELS`]?.split(',')[0] || 'qwen3.5-plus'
 }
 
 /**
