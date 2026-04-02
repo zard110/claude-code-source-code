@@ -11,8 +11,16 @@
  */
 import { config } from 'dotenv'
 import { resolve } from 'node:path'
+import { existsSync } from 'node:fs'
 
-config({ path: resolve(import.meta.dirname, '..', '.env.local') })
+// 注入内置默认配置
+import { initDefaults } from './config.js'
+initDefaults()
+
+// 项目级 .env.local 可覆盖（可选）
+if (existsSync(resolve(process.cwd(), '.env.local'))) {
+  config({ path: resolve(process.cwd(), '.env.local'), override: true })
+}
 
 import { AgentLoop, Conversation } from './agent/core.js'
 import type { AgentEvent, ConfirmFn, LlmConfig, AgentOptions, Message, AskUserFn, AskUserInput } from './agent/core.js'

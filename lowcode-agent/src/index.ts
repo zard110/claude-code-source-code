@@ -1,16 +1,27 @@
+#!/usr/bin/env node
 /**
  * 入口 — 薄壳层，组合 Terminal UI + Agent Core
  *
  * 职责：
- * - 加载 .env.local
+ * - 初始化默认配置（内置 key，用户无需配置）
+ * - 加载可选的项目级 .env.local 覆盖
  * - 创建依赖
  * - 主循环
  */
 import { config } from 'dotenv'
 import { resolve } from 'node:path'
+import { existsSync } from 'node:fs'
 import chalk from 'chalk'
 
-config({ path: resolve(import.meta.dirname, '..', '.env.local') })
+// 1. 注入内置默认配置（用户零配置即可使用）
+import { initDefaults } from './config.js'
+initDefaults()
+
+// 2. 项目级 .env.local 可覆盖默认配置（可选）
+const projectEnvPath = resolve(process.cwd(), '.env.local')
+if (existsSync(projectEnvPath)) {
+  config({ path: projectEnvPath, override: true })
+}
 
 import { createDefaultRegistry } from './tools/registry.js'
 import { buildProjectContext, createToolContext } from './agent/context.js'
