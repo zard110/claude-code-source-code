@@ -65,9 +65,9 @@ export type AskUserFn = (question: AskUserInput) => Promise<string>
 
 /** LLM 配置 */
 export interface LlmConfig {
-  baseURL: string
-  apiKey: string
-  model: string
+  baseURL?: string
+  apiKey?: string
+  model?: string
 }
 
 /** Agent 选项 */
@@ -194,8 +194,49 @@ export function createLlmClient(config?: Partial<LlmConfig>): OpenAI {
   })
 }
 
-export function getDefaultModel(): string {
-  return process.env.CENTIT_PLANNER_MODEL || process.env.CENTIT_MODELS|| 'gpt-4o'
+export function getDefaultModel(provider?: string): string {
+  // 如果指定了 provider，使用该 provider 的 PLANNER_MODEL
+  if (provider) {
+    const providerUpper = provider.toUpperCase()
+    return process.env[`${providerUpper}_PLANNER_MODEL`] || 'gpt-4o'
+  }
+  // 否则使用默认的 CENTIT_PROVIDER
+  return process.env.CENTIT_PLANNER_MODEL || process.env.CENTIT_MODELS?.split(',')[0] || 'gpt-4o'
+}
+
+/**
+ * 根据模型名自动匹配 provider 配置
+ * 遍历 AI_PROVIDER 和环境变量中的 provider，找到包含该模型的配置
+ */
+export function resolveLlmConfig(model?: string): Partial<LlmConfig> {
+  if (!model) return {}
+
+  // 1. 从各 provider 的 MODELS 列表中查找
+  const providerPrefixes = ['CENTIT', 'QWEN', 'DEEPSEEK', 'OPENAI']
+  for (const prefix of providerPrefixes) {
+    const models = process.env[`${prefix}_MODELS`]
+    if (models?.split(',').map(m => m.trim()).includes(model)) {
+      return {
+        baseURL: process.env[`${prefix}_BASE_URL`],
+        apiKey: process.env[`${prefix}_API_KEY`],
+        model,
+      }
+    }
+  }
+
+  // 2. 从各 provider 的 PLANNER_MODEL 中查找
+  for (const prefix of providerPrefixes) {
+    if (process.env[`${prefix}_PLANNER_MODEL`] === model) {
+      return {
+        baseURL: process.env[`${prefix}_BASE_URL`],
+        apiKey: process.env[`${prefix}_API_KEY`],
+        model,
+      }
+    }
+  }
+
+  // 3. 未找到匹配的 provider，只传模型名（可能用默认 baseURL）
+  return { model }
 }
 
 // ─── AgentLoop — 核心循环 ──────────────────────────────────
