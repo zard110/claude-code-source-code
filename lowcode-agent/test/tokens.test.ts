@@ -3,6 +3,7 @@ import {
   estimateTokens,
   estimateMessagesTokens,
   shouldCompact,
+  shouldCompactByUsage,
   getContextWindow,
   COMPACT_THRESHOLD,
 } from '../src/utils/tokens.js'
@@ -80,6 +81,34 @@ describe('shouldCompact', () => {
       { role: 'user', content: longContent },
     ]
     expect(shouldCompact(messages, 'qwq-32b')).toBe(true)
+  })
+
+  it('消息条数超过阈值时需要压缩', () => {
+    // 即使每条消息很短，超过 50 条也触发压缩
+    const messages: Message[] = Array.from({ length: 51 }, (_, i) => ({
+      role: (i % 2 === 0 ? 'user' : 'assistant') as Message['role'],
+      content: 'hi',
+    }))
+    expect(shouldCompact(messages)).toBe(true)
+  })
+
+  it('消息条数未超阈值且 token 未超阈值时不压缩', () => {
+    const messages: Message[] = Array.from({ length: 40 }, (_, i) => ({
+      role: (i % 2 === 0 ? 'user' : 'assistant') as Message['role'],
+      content: 'hi',
+    }))
+    expect(shouldCompact(messages)).toBe(false)
+  })
+})
+
+describe('shouldCompactByUsage', () => {
+  it('真实用量低于阈值不压缩', () => {
+    expect(shouldCompactByUsage(10_000, 'qwq-32b')).toBe(false)
+  })
+
+  it('真实用量超过阈值触发压缩', () => {
+    const window = getContextWindow('qwq-32b')
+    expect(shouldCompactByUsage(Math.ceil(window * 0.85), 'qwq-32b')).toBe(true)
   })
 })
 

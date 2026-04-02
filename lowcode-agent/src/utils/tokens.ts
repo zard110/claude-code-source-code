@@ -48,12 +48,27 @@ export function getContextWindow(model: string): number {
 /** 触发自动压缩的阈值（上下文使用比例） */
 export const COMPACT_THRESHOLD = 0.8
 
+/** 触发自动压缩的消息条数阈值 */
+export const COMPACT_MESSAGE_COUNT = 50
+
 /** 压缩时保留最近几轮对话（每轮 = user + assistant，所以 *2） */
 export const KEEP_RECENT_TURNS = 4
 
 /** 判断是否需要压缩 */
 export function shouldCompact(messages: readonly Message[], model?: string): boolean {
+  // 条件1：消息条数过多（估算可能不准，用条数兜底）
+  if (messages.length > COMPACT_MESSAGE_COUNT) return true
+  // 条件2：估算 token 超过窗口阈值
   const tokens = estimateMessagesTokens(messages)
   const window = model ? getContextWindow(model) : DEFAULT_WINDOW
   return tokens > window * COMPACT_THRESHOLD
+}
+
+/**
+ * 根据 API 返回的真实 token 用量判断是否需要压缩
+ * 当真实用量接近窗口上限时立即触发
+ */
+export function shouldCompactByUsage(inputTokens: number, model?: string): boolean {
+  const window = model ? getContextWindow(model) : DEFAULT_WINDOW
+  return inputTokens > window * COMPACT_THRESHOLD
 }

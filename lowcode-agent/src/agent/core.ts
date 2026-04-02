@@ -22,7 +22,7 @@ import { buildProjectContext } from './context.js'
 import { buildSystemPrompt } from './prompt.js'
 import type { Skill } from '../skills/types.js'
 import { extractToolCalls, cleanToolTags } from './tool-parser.js'
-import { shouldCompact, estimateMessagesTokens, KEEP_RECENT_TURNS } from '../utils/tokens.js'
+import { shouldCompact, shouldCompactByUsage, estimateMessagesTokens, KEEP_RECENT_TURNS } from '../utils/tokens.js'
 import { compactMessages } from './compact.js'
 import { loadProjectMemory } from './memory.js'
 import { PlanState, planCreateSchema, buildBatchExecutionPrompt } from './plan.js'
@@ -314,6 +314,19 @@ export class AgentLoop {
         }
 
         console.error(`[AgentLoop] 流结束: thinking=${thinkingCount}chunks content=${contentCount}chunks fullText=${fullText.length}字符 usage=${lastUsage ? `${lastUsage.inputTokens}/${lastUsage.outputTokens}` : 'N/A'}`)
+
+        // 用 API 返回的真实 token 用量检查是否需要压缩
+        if (lastUsage && shouldCompactByUsage(lastUsage.inputTokens, this.model)) {
+          console.error(`[AgentLoop] 真实用量 ${lastUsage.inputTokens} 接近窗口上限，触发压缩...`)
+          try {
+            const compacted = await this.conversation.compact(this.llmClient, this.model)
+            if (compacted > 0) {
+              yield { type: 'assistant_text', text: `\n[系统] 上下文已自动压缩（${compacted} 条历史消息被摘要替代）\n\n` }
+            }
+          } catch (err) {
+            console.error('[AgentLoop] 迭代中压缩失败:', err)
+          }
+        }
 
         logResponse(fullText, lastUsage)
 
