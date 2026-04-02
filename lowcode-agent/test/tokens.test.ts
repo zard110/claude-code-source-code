@@ -3,7 +3,7 @@ import {
   estimateTokens,
   estimateMessagesTokens,
   shouldCompact,
-  CONTEXT_WINDOW,
+  getContextWindow,
   COMPACT_THRESHOLD,
 } from '../src/utils/tokens.js'
 import type { Message } from '../src/agent/core.js'
@@ -74,10 +74,25 @@ describe('shouldCompact', () => {
 
   it('接近阈值时需要压缩', () => {
     // 构造一个超过阈值的对话
-    const longContent = '中'.repeat(Math.ceil(CONTEXT_WINDOW * COMPACT_THRESHOLD))
+    const window = getContextWindow('qwq-32b')
+    const longContent = '中'.repeat(Math.ceil(window * COMPACT_THRESHOLD))
     const messages: Message[] = [
       { role: 'user', content: longContent },
     ]
-    expect(shouldCompact(messages)).toBe(true)
+    expect(shouldCompact(messages, 'qwq-32b')).toBe(true)
+  })
+})
+
+describe('getContextWindow', () => {
+  it('gpt-4o 返回 128k', () => {
+    expect(getContextWindow('gpt-4o')).toBe(128_000)
+  })
+
+  it('模糊匹配 qwen/qwq-32b', () => {
+    expect(getContextWindow('qwen/qwq-32b')).toBe(32_768)
+  })
+
+  it('未知模型返回默认值', () => {
+    expect(getContextWindow('unknown-model')).toBe(32_768)
   })
 })

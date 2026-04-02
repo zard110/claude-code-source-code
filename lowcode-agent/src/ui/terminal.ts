@@ -78,6 +78,13 @@ export class TerminalUI {
     }
   }
 
+  /** 获取工具执行进度回调函数（注入到 AgentCore） */
+  getProgressFn(): (message: string) => void {
+    return (message: string) => {
+      this.spinner.update(message)
+    }
+  }
+
   /** 获取用户提问回调函数（注入到 AgentCore） */
   getAskUserFn(): AskUserFn {
     return async (question: AskUserInput): Promise<string> => {

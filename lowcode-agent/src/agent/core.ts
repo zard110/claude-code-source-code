@@ -79,6 +79,8 @@ export interface AgentOptions {
   confirmFn?: ConfirmFn
   /** 用户提问回调 */
   askUserFn?: AskUserFn
+  /** 工具执行进度回调 */
+  onProgress?: (message: string) => void
   /** 项目记忆内容（来自 AGENT.md） */
   projectMemory?: string
 }
@@ -96,10 +98,12 @@ export class Conversation {
   private messages: Message[] = []
   projectContext: ProjectContext
   private summary: string = ''
+  private llmModel: string
 
-  constructor(initialMessages: Message[], projectContext: ProjectContext) {
+  constructor(initialMessages: Message[], projectContext: ProjectContext, llmModel?: string) {
     this.messages = [...initialMessages]
     this.projectContext = projectContext
+    this.llmModel = llmModel ?? 'gpt-4o'
   }
 
   get length(): number {
@@ -145,7 +149,7 @@ export class Conversation {
 
   /** 是否需要压缩 */
   needsCompact(): boolean {
-    return shouldCompact(this.messages)
+    return shouldCompact(this.messages, this.llmModel)
   }
 
   /**
@@ -172,6 +176,7 @@ export function createLlmClient(config?: Partial<LlmConfig>): OpenAI {
   return new OpenAI({
     baseURL: config?.baseURL || process.env.CENTIT_BASE_URL,
     apiKey: config?.apiKey || process.env.CENTIT_API_KEY,
+    timeout: 60_000, // 60s 超时，防止网络故障挂死 agent
   })
 }
 
@@ -192,6 +197,7 @@ export class AgentLoop {
   private options: AgentOptions
   private confirmFn?: ConfirmFn
   private askUserFn?: AskUserFn
+  private onProgress?: (message: string) => void
   private maxIterations: number
   private maxTokens: number
   private currentIteration = 0
@@ -218,6 +224,7 @@ export class AgentLoop {
     this.options = deps.options ?? {}
     this.confirmFn = deps.options?.confirmFn
     this.askUserFn = deps.options?.askUserFn
+    this.onProgress = deps.options?.onProgress
     this.maxIterations = deps.options?.maxIterations ?? 30
     this.maxTokens = deps.options?.maxTokens ?? 4096
   }
@@ -474,7 +481,15 @@ export class AgentLoop {
               }
             }
 
-            const result = await tool.handler(parsedInput.data, this.toolCtx)
+            // 设置进度回调，工具执行完后清理
+            this.toolCtx.onProgress = this.onProgress
+            const result = await Promise.race([
+              tool.handler(parsedInput.data, this.toolCtx),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error(`工具 ${tc.name} 执行超时 (30s)`)), 30_000)
+              ),
+            ])
+            this.toolCtx.onProgress = undefined
             yield {
               type: 'tool_result',
               tool: tc.name,
@@ -502,9 +517,13 @@ export class AgentLoop {
 
           // 有工具调用 → 继续循环
         } else {
-          // 检测"说了要做但没做"的情况：模型输出了继续意图但没有工具调用
-          const continuePatterns = /继续|还有|remaining|next|继续读取|继续查看|还没.*完|还没.*完|还有.*文件|还有.*没读/
-          if (continuePatterns.test(fullText) && this.currentIteration < this.maxIterations) {
+          // 兜底：模型输出了操作意图但没有 <tool> 标签
+          // 短文本（< 300字符）且不含结束标记，说明模型"忘了"输出工具调用
+          // 策略：短文本 + 无结束标记 + 有操作信号词 → 注入提示重试
+          const hasCompletionMark = /总结|完成了|已创建|已删除|已修改|已添加|已补充|已更新|执行成功|全部完成|没有找到|不存在|暂无|无需|summary|done|success|not found|no\s+need/i.test(fullText)
+          const hasActionSignal = /继续|还有|剩下|补充|添加|调整|更新|新建|接下来|现在来|让我|我来|需要|修改|创建|删除|移动|remaining|continue|next|still|add|let me|need to|will|going to/i.test(fullText)
+          const isShortWithoutTool = fullText.length < 300 && fullText.length > 0 && !hasCompletionMark && hasActionSignal
+          if (isShortWithoutTool && this.currentIteration < this.maxIterations) {
             console.error(`[AgentLoop] 检测到继续意图但无工具调用，注入提示继续`)
             this.conversation.addAssistant(fullText)
             this.conversation.addToolResult('你的上一次回复表达了继续操作的意图，但没有输出 <tool> 标签。请立即输出 <tool name="..."> 标签继续操作，不要输出任何多余文字。')
@@ -547,7 +566,7 @@ export class AgentLoop {
     ]
     for (const msg of this.conversation.getMessages()) {
       if (msg.role === 'tool') {
-        messages.push({ role: 'user', content: msg.content })
+        messages.push({ role: 'user', content: `[工具执行结果]\n${msg.content}` })
       } else {
         messages.push({ role: msg.role as 'user' | 'assistant', content: msg.content })
       }

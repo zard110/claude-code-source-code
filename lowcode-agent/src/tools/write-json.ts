@@ -1,7 +1,8 @@
 import { z } from 'zod'
 import { buildTool, type ToolContext, type ToolResult } from './types.js'
 import { writeFile, mkdir } from 'node:fs/promises'
-import { join, isAbsolute, dirname } from 'node:path'
+import { dirname } from 'node:path'
+import { safeResolve } from '../utils/path-guard.js'
 
 export const writeJsonTool = buildTool({
   name: 'write_json',
@@ -17,9 +18,7 @@ export const writeJsonTool = buildTool({
     ctx: ToolContext
   ): Promise<ToolResult<{ path: string; size: number }>> => {
     try {
-      const absPath = isAbsolute(input.file_path)
-        ? input.file_path
-        : join(ctx.workDir, input.file_path)
+      const absPath = safeResolve(ctx.workDir, input.file_path)
 
       // Ensure directory exists
       await mkdir(dirname(absPath), { recursive: true })

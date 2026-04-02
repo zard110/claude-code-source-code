@@ -1,5 +1,4 @@
 import type { Tool } from './types.js'
-import { toApiTool } from './types.js'
 import { listFilesTool } from './list-files.js'
 import { readJsonTool } from './read-json.js'
 import { writeJsonTool } from './write-json.js'
@@ -26,11 +25,6 @@ export class ToolRegistry {
 
   getAll(): Tool[] {
     return Array.from(this.tools.values())
-  }
-
-  /** Convert all registered tools to Anthropic API format */
-  toApiTools(): object[] {
-    return this.getAll().map((t) => toApiTool(t))
   }
 }
 

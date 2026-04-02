@@ -19,6 +19,7 @@ import type { Message, AgentEvent } from './agent/core.js'
 import { SkillRegistry } from './skills/registry.js'
 import { TerminalUI } from './ui/terminal.js'
 import { loadProjectMemory } from './agent/memory.js'
+import { saveSession, loadSession } from './agent/persistence.js'
 import { initLogger, getLogFilePath, logUserInput } from './utils/logger.js'
 
 // ─── Main ─────────────────────────────────────────────
@@ -41,7 +42,11 @@ async function main() {
   const projectMemory = await loadProjectMemory(workDir)
 
   // 持久化对话历史（跨轮次保持上下文）
-  const history: Message[] = []
+  const fresh = process.argv.includes('--fresh')
+  const history: Message[] = fresh ? [] : await loadSession(workDir)
+  if (history.length > 0) {
+    console.log(chalk.gray(`  已恢复上次会话 (${history.length} 条消息)，--fresh 开始新会话\n`))
+  }
 
   // 主循环
   while (true) {
@@ -66,6 +71,7 @@ async function main() {
       options: {
         confirmFn: ui.getConfirmFn(),
         askUserFn: ui.getAskUserFn(),
+        onProgress: ui.getProgressFn(),
         projectMemory: projectMemory ?? undefined,
       },
     })
@@ -82,6 +88,9 @@ async function main() {
       // 同步 conversation 回外部 history
       history.length = 0
       history.push(...conversation.getMessages())
+
+      // 持久化到磁盘
+      await saveSession(workDir, history)
     } catch (err: unknown) {
       ui.stopSpinner()
       const msg = err instanceof Error ? err.message : String(err)

@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { buildTool, type ToolContext, type ToolResult } from './types.js'
 import { unlink } from 'node:fs/promises'
-import { join, isAbsolute } from 'node:path'
+import { safeResolve } from '../utils/path-guard.js'
 
 export const batchDeleteTool = buildTool({
   name: 'delete_files',
@@ -19,10 +19,10 @@ export const batchDeleteTool = buildTool({
     const failed: string[] = []
 
     for (const filePath of input.file_paths) {
+      const idx = deleted.length + failed.length + 1
+      ctx.onProgress?.(`删除文件 ${idx}/${input.file_paths.length}: ${filePath}`)
       try {
-        const absPath = isAbsolute(filePath)
-          ? filePath
-          : join(ctx.workDir, filePath)
+        const absPath = safeResolve(ctx.workDir, filePath)
 
         await unlink(absPath)
         ctx.fileCache.delete(absPath)

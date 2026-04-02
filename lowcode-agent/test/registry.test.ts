@@ -27,20 +27,6 @@ describe('ToolRegistry', () => {
     expect(registry.getAll()).toHaveLength(2)
   })
 
-  it('toApiTools 转换格式', () => {
-    const registry = new ToolRegistry()
-    registry.register({
-      name: 'my_tool',
-      description: 'desc',
-      inputSchema: {} as any,
-      isReadOnly: true,
-      handler: async () => ({ success: true, message: '' }),
-    })
-    const apiTools = registry.toApiTools()
-    expect(apiTools).toHaveLength(1)
-    // toApiTool returns name, description, input_schema
-    expect((apiTools[0] as any).name).toBe('my_tool')
-  })
 })
 
 describe('createDefaultRegistry', () => {

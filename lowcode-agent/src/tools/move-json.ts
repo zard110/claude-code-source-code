@@ -1,7 +1,8 @@
 import { z } from 'zod'
 import { buildTool, type ToolContext, type ToolResult } from './types.js'
 import { rename, mkdir } from 'node:fs/promises'
-import { join, isAbsolute, dirname } from 'node:path'
+import { dirname } from 'node:path'
+import { safeResolve } from '../utils/path-guard.js'
 
 export const moveFileTool = buildTool({
   name: 'move_file',
@@ -17,12 +18,8 @@ export const moveFileTool = buildTool({
     ctx: ToolContext
   ): Promise<ToolResult<{ from: string; to: string }>> => {
     try {
-      const absSource = isAbsolute(input.source_path)
-        ? input.source_path
-        : join(ctx.workDir, input.source_path)
-      const absTarget = isAbsolute(input.target_path)
-        ? input.target_path
-        : join(ctx.workDir, input.target_path)
+      const absSource = safeResolve(ctx.workDir, input.source_path)
+      const absTarget = safeResolve(ctx.workDir, input.target_path)
 
       // Ensure target directory exists
       await mkdir(dirname(absTarget), { recursive: true })

@@ -116,8 +116,8 @@ export async function compactMessages(
   let summary: string
   try {
     summary = await generateSummary(llmClient, oldMessages, model)
-  } catch {
-    // LLM 调用失败时用本地摘要兜底
+  } catch (err) {
+    console.error('[compact] LLM 摘要生成失败，使用本地兜底:', err)
     summary = localSummary(oldMessages)
   }
 

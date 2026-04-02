@@ -1,7 +1,8 @@
 import { z } from 'zod'
 import { buildTool, type ToolContext, type ToolResult } from './types.js'
 import { writeFile, mkdir } from 'node:fs/promises'
-import { join, isAbsolute, dirname } from 'node:path'
+import { dirname } from 'node:path'
+import { safeResolve } from '../utils/path-guard.js'
 
 /**
  * Batch write tool — creates multiple JSON files in a single tool call.
@@ -38,10 +39,10 @@ export const batchWriteTool = buildTool({
     const failed: Array<{ path: string; error: string }> = []
 
     for (const file of input.files) {
+      const idx = created.length + failed.length + 1
+      ctx.onProgress?.(`写入文件 ${idx}/${input.files.length}: ${file.file_path}`)
       try {
-        const absPath = isAbsolute(file.file_path)
-          ? file.file_path
-          : join(ctx.workDir, file.file_path)
+        const absPath = safeResolve(ctx.workDir, file.file_path)
 
         await mkdir(dirname(absPath), { recursive: true })
 

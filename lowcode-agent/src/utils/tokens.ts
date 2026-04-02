@@ -25,10 +25,25 @@ export function estimateMessagesTokens(messages: readonly Message[]): number {
   return messages.reduce((sum, m) => sum + estimateTokens(m.content), 0)
 }
 
-// ─── 上下文窗口常量 ──────────────────────────────────────
+// ─── 上下文窗口 ──────────────────────────────────────────
 
-/** qwq 模型的上下文窗口大小 */
-export const CONTEXT_WINDOW = 32_768
+/** 按模型名查上下文窗口大小 */
+const MODEL_WINDOWS: Record<string, number> = {
+  'gpt-4o': 128_000,
+  'gpt-4o-mini': 128_000,
+  'gpt-4': 8_192,
+  'qwq-32b': 32_768,
+}
+
+const DEFAULT_WINDOW = 32_768
+
+export function getContextWindow(model: string): number {
+  // 模糊匹配：model 可能是 "qwq-32b" 或 "qwen/qwq-32b" 等
+  for (const [key, window] of Object.entries(MODEL_WINDOWS)) {
+    if (model.includes(key)) return window
+  }
+  return DEFAULT_WINDOW
+}
 
 /** 触发自动压缩的阈值（上下文使用比例） */
 export const COMPACT_THRESHOLD = 0.8
@@ -37,7 +52,8 @@ export const COMPACT_THRESHOLD = 0.8
 export const KEEP_RECENT_TURNS = 4
 
 /** 判断是否需要压缩 */
-export function shouldCompact(messages: readonly Message[]): boolean {
+export function shouldCompact(messages: readonly Message[], model?: string): boolean {
   const tokens = estimateMessagesTokens(messages)
-  return tokens > CONTEXT_WINDOW * COMPACT_THRESHOLD
+  const window = model ? getContextWindow(model) : DEFAULT_WINDOW
+  return tokens > window * COMPACT_THRESHOLD
 }

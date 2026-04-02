@@ -31,12 +31,15 @@ const DARK_GRAY = '\x1b[38;5;240m'
 const THINKING_VERBS = ['思考中', '分析中', '推理中', '生成中']
 const TOOL_VERBS: Record<string, string> = {
   write_json: '写入文件',
+  write_files: '批量写入',
   read_json: '读取文件',
   modify_json: '修改文件',
   delete_file: '删除文件',
+  delete_files: '批量删除',
   list_files: '列出文件',
   move_file: '移动文件',
   plan_create: '制定计划',
+  ask_user: '询问用户',
 }
 const DEFAULT_TOOL_VERB = '执行中'
 

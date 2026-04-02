@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { buildTool, type ToolContext, type ToolResult } from './types.js'
 import { readFile, writeFile } from 'node:fs/promises'
-import { join, isAbsolute } from 'node:path'
+import { safeResolve } from '../utils/path-guard.js'
 import { getByPath, setByPath, deleteByPath } from '../utils/json-path.js'
 import { jsonDiff } from '../utils/diff.js'
 
@@ -38,9 +38,7 @@ export const modifyJsonTool = buildTool({
     ctx: ToolContext
   ): Promise<ToolResult<{ path: string; operation: string }>> => {
     try {
-      const absPath = isAbsolute(input.file_path)
-        ? input.file_path
-        : join(ctx.workDir, input.file_path)
+      const absPath = safeResolve(ctx.workDir, input.file_path)
 
       // Read current file
       const content = await readFile(absPath, 'utf-8')

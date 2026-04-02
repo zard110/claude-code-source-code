@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { buildTool, type ToolContext, type ToolResult } from './types.js'
 import { unlink } from 'node:fs/promises'
-import { join, isAbsolute } from 'node:path'
+import { safeResolve } from '../utils/path-guard.js'
 
 export const deleteFileTool = buildTool({
   name: 'delete_file',
@@ -16,9 +16,7 @@ export const deleteFileTool = buildTool({
     ctx: ToolContext
   ): Promise<ToolResult<null>> => {
     try {
-      const absPath = isAbsolute(input.file_path)
-        ? input.file_path
-        : join(ctx.workDir, input.file_path)
+      const absPath = safeResolve(ctx.workDir, input.file_path)
 
       await unlink(absPath)
       ctx.fileCache.delete(absPath)

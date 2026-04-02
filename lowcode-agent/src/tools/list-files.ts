@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { buildTool, type ToolContext, type ToolResult } from './types.js'
 import { readdir } from 'node:fs/promises'
 import { join, extname, relative } from 'node:path'
+import { safeResolve } from '../utils/path-guard.js'
 
 export const listFilesTool = buildTool({
   name: 'list_files',
@@ -24,7 +25,7 @@ export const listFilesTool = buildTool({
   ): Promise<ToolResult<string[]>> => {
     try {
       const targetDir = input.directory
-        ? join(ctx.workDir, input.directory)
+        ? safeResolve(ctx.workDir, input.directory)
         : ctx.workDir
       const ext = input.extension || '.json'
 
@@ -61,8 +62,8 @@ async function listFilesRecursive(dir: string, ext: string): Promise<string[]> {
         results.push(fullPath)
       }
     }
-  } catch {
-    // Skip directories we can't read
+  } catch (err) {
+    console.error('[listFilesRecursive] 无法读取目录:', dir, err)
   }
   return results
 }

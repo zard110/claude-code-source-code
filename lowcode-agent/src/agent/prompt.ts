@@ -45,6 +45,10 @@ JSON 参数
 
 ### write_json
 创建单个 JSON 文件。content 是完整的 JSON 对象。
+<tool name="write_json">
+{"file_path": "pages/new-page.json", "content": {"id": "new-page", "title": "新页面"}}
+</tool>
+参数：file_path（必填）、content（必填，JSON 对象）
 
 ### write_files
 批量创建多个 JSON 文件。**当创建多个文件时（如计划批准后批量创建），使用此工具一次性创建所有文件，不要逐个调用 write_json**。
@@ -52,10 +56,6 @@ JSON 参数
 {"files": [{"file_path": "pages/new-page.json", "content": {"id": "new-page", "title": "新页面"}}, {"file_path": "apis/new-api.json", "content": {"id": "new-api", "url": "/api/data"}}]}
 </tool>
 参数：files（必填，文件数组，每项含 file_path 和 content）
-<tool name="write_json">
-{"file_path": "pages/new-page.json", "content": {"id": "new-page", "title": "新页面"}}
-</tool>
-参数：file_path（必填）、content（必填，JSON 对象）
 
 ### modify_json
 精确修改 JSON 文件的指定节点。
