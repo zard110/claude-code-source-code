@@ -8,6 +8,7 @@ import type { CommandDefinition } from './types.js'
 import type { SkillDefinition } from '../skills/types.js'
 import type { AgentDefinition } from '../agents/types.js'
 import type { LlmConfig } from '../agent/core.js'
+import { getDefaultModel } from '../agent/core.js'
 
 // ─── 辅助 ─────────────────────────────────────────────
 
@@ -101,18 +102,18 @@ export function renderHelp(
 // ─── /model ───────────────────────────────────────────
 
 export function renderModelList(llmConfig: Partial<LlmConfig>): void {
-  const current = llmConfig.model
+  const current = llmConfig.model || getDefaultModel()
   const models = getAllModels()
 
-  process.stdout.write(`\n  ${chalk.cyan('当前模型:')} ${chalk.white.bold(current ?? '默认')}\n\n`)
+  process.stdout.write(`\n  ${chalk.cyan('当前模型:')} ${chalk.white.bold(current)}\n\n`)
   process.stdout.write(chalk.cyan('  可用模型:\n'))
 
   for (const m of models) {
     const isCurrent = m.name === current
     const name = isCurrent ? chalk.green(m.name) : chalk.white(m.name)
     const provider = chalk.gray(`(${m.provider})`)
-    const marker = isCurrent ? chalk.green.bold(' ← 当前') : ''
-    process.stdout.write(`    ${name.padEnd(18)}${provider}${marker}\n`)
+    const marker = isCurrent ? chalk.green.bold(' *') : ''
+    process.stdout.write(`    ${marker ? marker + ' ' : '  '}${name.padEnd(18)}${provider}\n`)
   }
 
   process.stdout.write(chalk.gray('\n  切换: /model <名称>\n\n'))
