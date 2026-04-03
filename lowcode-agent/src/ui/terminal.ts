@@ -250,6 +250,7 @@ export class TerminalUI {
         ctx.tokenCount += text.length
         if (ctx.displayBuffer.includes('<tool')) {
           ctx.hasToolTag = true
+          this.spinner.update('生成工具调用...')
         } else if (ctx.hasToolTag) {
           // skip
         } else {
