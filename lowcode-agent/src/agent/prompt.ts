@@ -96,9 +96,9 @@ JSON 参数
 参数：source_path（必填，源文件相对路径）、target_path（必填，目标文件相对路径）
 
 ### plan_create
-创建系统级计划。当用户要求创建包含多个页面或接口的系统时，必须先用此工具规划所有页面/接口。
+创建系统级计划。当用户要求创建包含多个页面或接口的系统时，必须先用此工具规划所有页面/接口/模型。
 <tool name="plan_create">
-{"title": "考勤管理系统", "description": "包含考勤记录、请假管理等模块", "items": [{"type": "page", "name": "attendance-record", "description": "考勤打卡记录", "filePath": "pages/attendance-record.json"}, {"type": "api", "name": "attendance-api", "description": "考勤数据接口", "filePath": "apis/attendance-api.json"}]}
+{"title": "考勤管理系统", "description": "包含考勤记录、请假管理等模块", "items": [{"type": "page", "name": "attendance-record", "description": "考勤打卡记录", "filePath": "pages/attendance-record.json"}, {"type": "api", "name": "attendance-query", "description": "查询考勤列表", "filePath": "apis/attendance-query.json"}, {"type": "api", "name": "attendance-create", "description": "新建考勤记录", "filePath": "apis/attendance-create.json"}, {"type": "model", "name": "attendance", "description": "考勤数据模型", "filePath": "models/attendance.json"}]}
 </tool>
 参数：title（必填，系统名称）、description（必填，系统描述）、items（必填，计划项数组，每项含 type/name/description/filePath，type 可为 page/api/model）
 
@@ -151,11 +151,13 @@ JSON 参数
 - 所有工具调用的 JSON 参数必须是合法的 JSON，确保所有字段都正确填写
 - **当用户要求删除所有或多个文件时，必须使用 delete_files 批量删除，不要逐个调用 delete_file**
 - **文件路径使用正斜杠 / 而非反斜杠 \\**
-- **引用关系约定**：页面通过组件的 dataSource 字段引用接口（如 "dataSource": "apis/xxx.json"）；接口通过 dataModel 字段引用数据模型（如 "dataModel": "models/xxx.json"）
+- **引用关系约定**：页面组件通过 dataSource 字段引用接口，支持字符串（单个）或数组（多个），如 "dataSource": ["apis/opportunity-query.json", "apis/opportunity-delete.json"]；接口通过 dataModel 字段引用数据模型（如 "dataModel": "models/opportunity.json"）
+- **接口文件命名约定**：每个接口文件只包含一个操作，命名格式为 {实体}-{操作}.json，操作固定为 query（列表）、get（详情）、create（新建）、update（更新）、delete（删除），如 opportunity-query.json、opportunity-create.json
+- **接口 JSON 格式**：每个接口文件包含 id、title、type("api")、method、url、dataModel（可选）、params（含 query/body/path 数组）、response（含 success/error）
 - **联动修改**：修改某个文件时，先查看项目上下文中的"文件引用关系"，找出所有引用了该文件的其他文件，一并读取并同步修改（如修改模型字段 → 同步更新接口 body → 同步更新页面表格列/表单字段）
 - **当用户要求创建包含多个页面/接口的系统时（如"XX管理系统"），必须先调用 plan_create 制定完整计划**
 - **计划批准后，使用 write_files 工具一次性创建所有文件，不要逐个调用 write_json**
-- plan_create 的一次参数中要包含系统所需的所有页面和接口`)
+- plan_create 的一次参数中要包含系统所需的所有页面、接口（每个操作单独一项）和模型`)
 
   // 2. Project context
   parts.push(`## 当前项目状态

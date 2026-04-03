@@ -49,7 +49,7 @@ const CREATE_PAGE_PROMPT = `# Create Page: 低代码页面创建向导
     {
       "type": "table",
       "columns": [],
-      "dataSource": { "api": "" }
+      "dataSource": ["apis/resource-query.json"]
     }
   ]
 }
