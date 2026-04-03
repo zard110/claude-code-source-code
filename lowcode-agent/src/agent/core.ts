@@ -411,7 +411,6 @@ export class AgentLoop {
           max_tokens: this.maxTokens,
           stream: this.options.stream ?? true,
           stream_options: { include_usage: true },
-          tools: this.buildToolDefinitions(),
         })
 
         // stream=true 时返回 AsyncIterable<ChatCompletionChunk>
@@ -904,7 +903,7 @@ export class AgentLoop {
             }
             console.error(`[AgentLoop] 模型描述了操作意图但未调用工具，注入提示重试`)
             this.conversation.addAssistant(fullText)
-            this.conversation.addToolResult('你的回复描述了要执行的操作但没有实际调用工具。请直接调用工具执行操作，不要只是描述你的计划。')
+            this.conversation.addToolResult('你的回复描述了要执行的操作但没有实际调用工具。请立即使用以下格式调用工具：\n\n<tool name="工具名">\nJSON参数\n</tool>\n\n例如：<tool name="delete_files">\n{"file_paths": ["apis/example.json"]}\n</tool>\n\n不要再说"我将..."，直接输出 <tool> 标签。')
             continue
           }
 
