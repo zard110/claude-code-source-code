@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 新增 `src/utils/select.ts`，封装 clack 的 select/confirm/text 组件
 
 ### 修复
+- 修复 agent 循环重试逻辑导致无限循环的问题：操作完成后模型总结文本被误判为"意图但未执行"
+  - 完成标记优先检测（"已"、"成功"、"完成"等），不再对操作总结触发重试
+  - 移除 `mentionsTool` 检查（文本提及工具名≠需要重试）
+  - 收紧意图正则，只匹配明确的未来意图（"让我"/"我来" + 动作词）
+  - 文本长度阈值从 800 降至 300，长文本直接视为正常回复
 - 修复"你好"等纯对话触发 5 次无效迭代的问题（添加 `currentIteration > 1` 守卫）
 - 修复自动压缩（auto-compact）可能卡死的问题：添加 30 秒超时 + 熔断器
 - 修复 `/model` 命令选择后程序退出的问题

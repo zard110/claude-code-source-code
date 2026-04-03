@@ -889,21 +889,40 @@ export class AgentLoop {
 
           // 有工具调用 → 继续循环
         } else {
-          // 无工具调用 → 检查是否需要重试（模型描述了意图但没调工具）
-          const toolNames = this.toolRegistry.getAll().map(t => t.name)
-          const mentionsTool = toolNames.some(n => fullText.includes(n))
-          const wantsAction = mentionsTool || /需要.*(?:读取|查看|创建|删除|修改|移动|列出)|先.*(?:读取|查看)|让我.*(?:读取|查看|调用)/i.test(fullText)
+          // 无工具调用
+          if (!fullText.trim()) {
+            console.error(`[AgentLoop] 无工具调用且无文本，结束循环`)
+            break
+          }
 
-          if (wantsAction && fullText.length > 0 && fullText.length < 800 && this.currentIteration < this.maxIterations) {
-            // 防死循环：连续重试 2 次后放弃
-            if (this.currentIteration >= 3 && this.conversation.getRecentMessages(2).every(m => m.role === 'tool' && m.content.includes('请使用工具'))) {
-              console.error(`[AgentLoop] 连续触发重试，放弃`)
+          // 完成标记：文本包含这些信号说明是操作总结或正常回复，不应重试
+          const hasCompletion = /(?:已[经完成功]?|成功|完毕|完成|没有|未找到|不存在|不存在|如下|以上|总结|帮你|共\d+|个文件)/.test(fullText)
+
+          // 长文本（>300字符）通常是正常回复或详细说明，不重试
+          const isLongText = fullText.length > 300
+
+          if (hasCompletion || isLongText) {
+            console.error(`[AgentLoop] 无工具调用，${hasCompletion ? '包含完成标记' : '文本较长'}(${fullText.length}字符)，结束循环`)
+            this.conversation.addAssistant(fullText)
+            break
+          }
+
+          // 未来意图检测：只有明确表达"我要做XX"且未完成的短文本才触发重试
+          const hasFutureIntent = /(?:让我|我来|我要|需要先|我将|先来|应该先).*(?:读取|查看|创建|删除|修改|移动|列出|检查|调用|分析)/.test(fullText)
+
+          if (hasFutureIntent) {
+            // 防死循环：统计最近消息中的重试提示次数
+            const recentMsgs = this.conversation.getRecentMessages(4)
+            const retryCount = recentMsgs.filter(m => m.role === 'tool' && m.content.includes('直接使用')).length
+            if (retryCount >= 2) {
+              console.error(`[AgentLoop] 已重试 ${retryCount} 次，放弃`)
               this.conversation.addAssistant(fullText)
               break
             }
+
             console.error(`[AgentLoop] 模型描述了操作意图但未调用工具，注入提示重试`)
             this.conversation.addAssistant(fullText)
-            this.conversation.addToolResult('你的回复描述了要执行的操作但没有实际调用工具。请立即使用以下格式调用工具：\n\n<tool name="工具名">\nJSON参数\n</tool>\n\n例如：<tool name="delete_files">\n{"file_paths": ["apis/example.json"]}\n</tool>\n\n不要再说"我将..."，直接输出 <tool> 标签。')
+            this.conversation.addToolResult('请直接使用工具调用格式调用工具，不要只描述意图。格式：<tool name="工具名">JSON参数</tool>')
             continue
           }
 
