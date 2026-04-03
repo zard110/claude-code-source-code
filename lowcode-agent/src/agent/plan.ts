@@ -12,8 +12,8 @@ import { z } from 'zod'
 // ─── Plan 类型 ──────────────────────────────────────────────
 
 export interface PlanItem {
-  /** 页面或接口 */
-  type: 'page' | 'api'
+  /** 页面、接口或数据模型 */
+  type: 'page' | 'api' | 'model'
   /** 英文标识，如 attendance-record */
   name: string
   /** 中文描述，如 考勤打卡记录 */
@@ -37,7 +37,7 @@ export const planCreateSchema = z.object({
   title: z.string().describe('系统名称'),
   description: z.string().describe('系统描述'),
   items: z.array(z.object({
-    type: z.enum(['page', 'api']).describe('页面或接口'),
+    type: z.enum(['page', 'api', 'model']).describe('页面、接口或数据模型'),
     name: z.string().describe('英文标识'),
     description: z.string().describe('中文描述'),
     filePath: z.string().describe('文件路径'),
@@ -99,7 +99,7 @@ export function formatPlanSummary(plan: Plan): string {
   for (let i = 0; i < plan.items.length; i++) {
     const item = plan.items[i]
     const idx = String(i + 1).padEnd(2)
-    const type = (item.type === 'page' ? '页面' : '接口').padEnd(4)
+    const type = (item.type === 'page' ? '页面' : item.type === 'api' ? '接口' : '模型').padEnd(4)
     const name = item.name.length > 18 ? item.name.slice(0, 17) + '…' : item.name.padEnd(18)
     const desc = item.description.length > 22 ? item.description.slice(0, 21) + '…' : item.description.padEnd(22)
     lines.push(`  │ ${idx} │ ${type} │ ${name} │ ${desc} │`)

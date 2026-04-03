@@ -57,7 +57,7 @@ JSON 参数
 ### write_files
 批量创建多个 JSON 文件。**当创建多个文件时（如计划批准后批量创建），使用此工具一次性创建所有文件，不要逐个调用 write_json**。
 <tool name="write_files">
-{"files": [{"file_path": "pages/new-page.json", "content": {"id": "new-page", "title": "新页面"}}, {"file_path": "apis/new-api.json", "content": {"id": "new-api", "url": "/api/data"}}]}
+{"files": [{"file_path": "pages/new-page.json", "content": {"id": "new-page", "title": "新页面"}}, {"file_path": "models/user.json", "content": {"id": "user", "title": "用户", "type": "model", "tableName": "user", "fields": []}}]}
 </tool>
 参数：files（必填，文件数组，每项含 file_path 和 content）
 
@@ -100,7 +100,7 @@ JSON 参数
 <tool name="plan_create">
 {"title": "考勤管理系统", "description": "包含考勤记录、请假管理等模块", "items": [{"type": "page", "name": "attendance-record", "description": "考勤打卡记录", "filePath": "pages/attendance-record.json"}, {"type": "api", "name": "attendance-api", "description": "考勤数据接口", "filePath": "apis/attendance-api.json"}]}
 </tool>
-参数：title（必填，系统名称）、description（必填，系统描述）、items（必填，计划项数组，每项含 type/name/description/filePath）
+参数：title（必填，系统名称）、description（必填，系统描述）、items（必填，计划项数组，每项含 type/name/description/filePath，type 可为 page/api/model）
 
 ### ask_user
 向用户提问并等待回答。当你需要收集用户偏好、选择或确认细节时使用此工具。
@@ -151,6 +151,10 @@ JSON 参数
 - 所有工具调用的 JSON 参数必须是合法的 JSON，确保所有字段都正确填写
 - **当用户要求删除所有或多个文件时，必须使用 delete_files 批量删除，不要逐个调用 delete_file**
 - **文件路径使用正斜杠 / 而非反斜杠 \\**
+- 数据模型文件放在 models/ 目录，type 固定为 "model"，必须包含 id、title、tableName、fields 字段。
+  fields 数组每项包含：name（字段名）、type（类型）、label（中文标签）、可选的 primaryKey/required/options。
+  支持的字段类型：string、text、integer、bigint、decimal、boolean、datetime、date、enum、json。
+  enum 类型需要 options 数组。示例路径：models/opportunity.json
 - **当用户要求创建包含多个页面/接口的系统时（如"XX管理系统"），必须先调用 plan_create 制定完整计划**
 - **计划批准后，使用 write_files 工具一次性创建所有文件，不要逐个调用 write_json**
 - plan_create 的一次参数中要包含系统所需的所有页面和接口`)
