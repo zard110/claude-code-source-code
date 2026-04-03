@@ -890,7 +890,24 @@ export class AgentLoop {
 
           // 有工具调用 → 继续循环
         } else {
-          // 无工具调用，结束循环
+          // 无工具调用 → 检查是否需要重试（模型描述了意图但没调工具）
+          const toolNames = this.toolRegistry.getAll().map(t => t.name)
+          const mentionsTool = toolNames.some(n => fullText.includes(n))
+          const wantsAction = mentionsTool || /需要.*(?:读取|查看|创建|删除|修改|移动|列出)|先.*(?:读取|查看)|让我.*(?:读取|查看|调用)/i.test(fullText)
+
+          if (wantsAction && fullText.length > 0 && fullText.length < 800 && this.currentIteration < this.maxIterations) {
+            // 防死循环：连续重试 2 次后放弃
+            if (this.currentIteration >= 3 && this.conversation.getRecentMessages(2).every(m => m.role === 'tool' && m.content.includes('请使用工具'))) {
+              console.error(`[AgentLoop] 连续触发重试，放弃`)
+              this.conversation.addAssistant(fullText)
+              break
+            }
+            console.error(`[AgentLoop] 模型描述了操作意图但未调用工具，注入提示重试`)
+            this.conversation.addAssistant(fullText)
+            this.conversation.addToolResult('你的回复描述了要执行的操作但没有实际调用工具。请直接调用工具执行操作，不要只是描述你的计划。')
+            continue
+          }
+
           console.error(`[AgentLoop] 无工具调用，结束循环`)
           this.conversation.addAssistant(fullText)
           break
