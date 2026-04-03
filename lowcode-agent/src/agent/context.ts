@@ -1,4 +1,4 @@
-import { readdir, stat } from 'node:fs/promises'
+import { readdir, stat, readFile } from 'node:fs/promises'
 import { join, extname, relative } from 'node:path'
 import type { ToolContext } from '../tools/types.js'
 
@@ -16,6 +16,7 @@ export interface FileInfo {
   path: string       // relative path
   size: number       // bytes
   modified: string   // ISO date
+  refs?: string[]    // files this file references (dataSource, dataModel)
 }
 
 /**
@@ -23,8 +24,8 @@ export interface FileInfo {
  */
 export async function buildProjectContext(workDir: string): Promise<ProjectContext> {
   const files = await scanFiles(workDir)
+  await resolveRefs(files, workDir)
   const summary = buildSummary(files, workDir)
-
   return { workDir, files, summary }
 }
 
@@ -36,6 +37,35 @@ export function createToolContext(workDir: string): ToolContext {
     workDir,
     fileCache: new Map(),
   }
+}
+
+/** 从 JSON 内容中递归提取所有字符串值里的文件引用 */
+function extractRefs(obj: unknown, knownPaths: Set<string>): string[] {
+  const refs = new Set<string>()
+  function walk(val: unknown): void {
+    if (typeof val === 'string') {
+      if (knownPaths.has(val)) refs.add(val)
+    } else if (Array.isArray(val)) {
+      val.forEach(walk)
+    } else if (val && typeof val === 'object') {
+      Object.values(val as Record<string, unknown>).forEach(walk)
+    }
+  }
+  walk(obj)
+  return [...refs]
+}
+
+/** 读取每个文件内容，解析引用关系 */
+async function resolveRefs(files: FileInfo[], workDir: string): Promise<void> {
+  const knownPaths = new Set(files.map(f => f.path))
+  await Promise.all(files.map(async (f) => {
+    try {
+      const raw = await readFile(join(workDir, f.path), 'utf-8')
+      const json = JSON.parse(raw)
+      const refs = extractRefs(json, knownPaths)
+      if (refs.length > 0) f.refs = refs
+    } catch { /* skip unreadable/invalid files */ }
+  }))
 }
 
 async function scanFiles(root: string): Promise<FileInfo[]> {
@@ -84,6 +114,17 @@ function buildSummary(files: FileInfo[], workDir: string): string {
   let summary = `项目目录 "${workDir}" 包含 ${files.length} 个 JSON 文件：\n`
   for (const [dir, fileList] of groups) {
     summary += `\n${dir}/\n${fileList.join('\n')}\n`
+  }
+
+  // 引用关系
+  const refLines: string[] = []
+  for (const f of files) {
+    if (f.refs && f.refs.length > 0) {
+      refLines.push(`  ${f.path} → ${f.refs.join(', ')}`)
+    }
+  }
+  if (refLines.length > 0) {
+    summary += `\n文件引用关系：\n${refLines.join('\n')}\n`
   }
 
   return summary
