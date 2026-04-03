@@ -15,8 +15,9 @@
 import OpenAI from 'openai'
 import type { ChatCompletionMessageParam, ChatCompletionChunk } from 'openai/resources/chat/completions.js'
 import { z } from 'zod'
+import { zodToJsonSchema } from 'zod-to-json-schema'
 import { ToolRegistry } from '../tools/registry.js'
-import type { ToolContext } from '../tools/types.js'
+import type { ToolContext, Tool } from '../tools/types.js'
 import type { ProjectContext } from './context.js'
 import { buildProjectContext } from './context.js'
 import { buildSystemPrompt } from './prompt.js'
@@ -316,6 +317,29 @@ export class AgentLoop {
     this.maxTokens = deps.options?.maxTokens ?? 4096
   }
 
+  /** 将 Tool[] 转为 OpenAI function calling 格式 */
+  private buildToolDefinitions() {
+    const tools = this.toolRegistry.getAll()
+    return tools.map(tool => {
+      const schema = tool.inputSchema as z.ZodTypeAny
+      let parameters: Record<string, unknown>
+      try {
+        parameters = zodToJsonSchema(schema)
+      } catch {
+        // zod-to-json-schema 转换失败时，用简单默认值
+        parameters = { type: 'object', properties: {}, additionalProperties: true }
+      }
+      return {
+        type: 'function' as const,
+        function: {
+          name: tool.name,
+          description: tool.description,
+          parameters,
+        },
+      }
+    })
+  }
+
   /** 重建 system prompt（project context 变化时调用） */
   rebuildSystemPrompt(): void {
     this.systemPrompt = buildSystemPrompt(
@@ -387,6 +411,7 @@ export class AgentLoop {
           max_tokens: this.maxTokens,
           stream: this.options.stream ?? true,
           stream_options: { include_usage: true },
+          tools: this.buildToolDefinitions(),
         })
 
         // stream=true 时返回 AsyncIterable<ChatCompletionChunk>
@@ -398,6 +423,9 @@ export class AgentLoop {
         let insideThink = false  // 追踪 <think> 标签状态
         let thinkBuffer = ''     // 缓冲可能跨 chunk 的标签
 
+        // 原生 function calling: 流式累积 tool_calls
+        const nativeToolCalls = new Map<number, { id: string; name: string; arguments: string }>()
+
         for await (const chunk of stream) {
           // 提取 usage（在最后一个 chunk 中）
           const usage = chunk.usage
@@ -405,6 +433,19 @@ export class AgentLoop {
             lastUsage = {
               inputTokens: usage.prompt_tokens ?? 0,
               outputTokens: usage.completion_tokens ?? 0,
+            }
+          }
+
+          // 累积原生 tool_calls（function calling）
+          const toolCallChunks = chunk.choices?.[0]?.delta?.tool_calls
+          if (toolCallChunks) {
+            for (const tc of toolCallChunks) {
+              if (!nativeToolCalls.has(tc.index)) {
+                nativeToolCalls.set(tc.index, { id: tc.id ?? '', name: '', arguments: '' })
+              }
+              const existing = nativeToolCalls.get(tc.index)!
+              if (tc.function?.name) existing.name = tc.function.name
+              if (tc.function?.arguments) existing.arguments += tc.function.arguments
             }
           }
 
@@ -494,7 +535,24 @@ export class AgentLoop {
 
         logResponse(fullText, lastUsage)
 
-        const calls = extractToolCalls(fullText)
+        // 优先使用原生 tool_calls（function calling），回退到文本解析
+        let calls: { name: string; input: unknown }[] = []
+
+        if (nativeToolCalls.size > 0) {
+          // 原生 function calling
+          for (const [, tc] of nativeToolCalls) {
+            try {
+              const input = JSON.parse(tc.arguments)
+              calls.push({ name: tc.name, input })
+            } catch {
+              calls.push({ name: tc.name, input: { raw: tc.arguments } })
+            }
+          }
+          console.error(`[AgentLoop] 原生 function calling: ${calls.length} 个工具调用: ${calls.map(c => c.name).join(', ')}`)
+        } else {
+          // 回退到文本解析（兼容不支持 function calling 的模型）
+          calls = extractToolCalls(fullText)
+        }
 
         // 检测不完整的 <tool 标签（qwq 模型常见：输出了 <tool 但没闭合）
         const hasUnclosedTool = fullText.includes('<tool') && calls.length === 0
@@ -511,7 +569,8 @@ export class AgentLoop {
         if (calls.length > 0) {
           console.error(`[AgentLoop] 找到 ${calls.length} 个工具调用: ${calls.map(c => c.name).join(', ')}`)
 
-          const cleanText = cleanToolTags(fullText, calls)
+          // 原生 tool_calls 时 fullText 不含工具标签，无需清理
+          const cleanText = nativeToolCalls.size > 0 ? fullText : cleanToolTags(fullText, calls as ReturnType<typeof extractToolCalls>)
           this.conversation.addAssistant(cleanText)
 
           // 执行每个工具
@@ -831,35 +890,7 @@ export class AgentLoop {
 
           // 有工具调用 → 继续循环
         } else {
-          // 兜底：模型输出了操作意图但没有 <tool> 标签
-          // 短文本（< 300字符）且不含结束标记，说明模型"忘了"输出工具调用
-          // 策略：短文本 + 无结束标记 + 有操作信号词 → 注入提示重试
-          const hasCompletionMark = /完成了|已创建|已删除|已修改|已添加|已补充|已更新|执行成功|全部完成|没有找到|不存在|暂无|无需修改|无需删除|告诉我|请随时|随时联系|summary|done|success|not found|no\s+need/i.test(fullText)
-          // 操作信号词：模型描述了要做什么但没输出 <tool> 标签
-          const hasActionSignal = /继续|还有|剩下|接下来|修改|创建|删除|移动|remaining|continue|next|still|add|need to/i.test(fullText)
-          // 强操作信号：明确提到工具名或"使用/调用"工具或要读取/查看文件
-          const hasStrongActionSignal = /read_json|write_json|modify_json|write_files|delete_file|list_files|move_file|使用.*工具|调用.*工具|先读取|先查看|让我先|我需要先|让我读取|让我查看|需要读取|需要查看|还需要/i.test(fullText)
-
-
-          // 强操作信号时忽略完成标记（如"还需要读取...然后总结"，有"总结"但实际还没完成）
-          const blockedByCompletion = hasCompletionMark && !hasStrongActionSignal
-          const isShortWithoutTool = fullText.length < 500 && fullText.length > 0 && !blockedByCompletion && (hasActionSignal || hasStrongActionSignal)
-          // 有强操作信号时第一轮也触发（如"添加字段"→模型说"让我先读取"但没输出tool）
-          // 无强信号时只在已调用过工具后触发（防止"你好"误判）
-          const shouldRetry = hasStrongActionSignal || this.currentIteration > 1
-          if (isShortWithoutTool && shouldRetry && this.currentIteration < this.maxIterations) {
-            // 防死循环：如果连续 2 次触发继续意图，说明模型确实没打算调工具
-            if (this.currentIteration >= 3 && this.conversation.getRecentMessages(2).every(m => m.role === 'tool' && m.content.includes('继续操作的意图'))) {
-              console.error(`[AgentLoop] 连续触发继续意图，模型无工具调用意图，结束循环`)
-              this.conversation.addAssistant(fullText)
-              break
-            }
-            console.error(`[AgentLoop] 检测到继续意图但无工具调用，注入提示继续`)
-            this.conversation.addAssistant(fullText)
-            this.conversation.addToolResult('你的上一次回复表达了继续操作的意图，但没有输出 <tool> 标签。请立即输出 <tool name="..."> 标签继续操作，不要输出任何多余文字。')
-            continue
-          }
-
+          // 无工具调用，结束循环
           console.error(`[AgentLoop] 无工具调用，结束循环`)
           this.conversation.addAssistant(fullText)
           break
