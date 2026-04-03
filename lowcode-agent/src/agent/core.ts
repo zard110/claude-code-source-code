@@ -834,14 +834,16 @@ export class AgentLoop {
           // 兜底：模型输出了操作意图但没有 <tool> 标签
           // 短文本（< 300字符）且不含结束标记，说明模型"忘了"输出工具调用
           // 策略：短文本 + 无结束标记 + 有操作信号词 → 注入提示重试
-          const hasCompletionMark = /总结|完成了|已创建|已删除|已修改|已添加|已补充|已更新|执行成功|全部完成|没有找到|不存在|暂无|无需|告诉我|请随时|随时联系|summary|done|success|not found|no\s+need/i.test(fullText)
+          const hasCompletionMark = /完成了|已创建|已删除|已修改|已添加|已补充|已更新|执行成功|全部完成|没有找到|不存在|暂无|无需修改|无需删除|告诉我|请随时|随时联系|summary|done|success|not found|no\s+need/i.test(fullText)
           // 操作信号词：模型描述了要做什么但没输出 <tool> 标签
           const hasActionSignal = /继续|还有|剩下|接下来|修改|创建|删除|移动|remaining|continue|next|still|add|need to/i.test(fullText)
-          // 强操作信号：明确提到工具名或"使用/调用"工具
-          const hasStrongActionSignal = /read_json|write_json|modify_json|write_files|delete_file|list_files|move_file|使用.*工具|调用.*工具|先读取|先查看|让我先|我需要先/i.test(fullText)
+          // 强操作信号：明确提到工具名或"使用/调用"工具或要读取/查看文件
+          const hasStrongActionSignal = /read_json|write_json|modify_json|write_files|delete_file|list_files|move_file|使用.*工具|调用.*工具|先读取|先查看|让我先|我需要先|让我读取|让我查看|需要读取|需要查看|还需要/i.test(fullText)
 
 
-          const isShortWithoutTool = fullText.length < 500 && fullText.length > 0 && !hasCompletionMark && (hasActionSignal || hasStrongActionSignal)
+          // 强操作信号时忽略完成标记（如"还需要读取...然后总结"，有"总结"但实际还没完成）
+          const blockedByCompletion = hasCompletionMark && !hasStrongActionSignal
+          const isShortWithoutTool = fullText.length < 500 && fullText.length > 0 && !blockedByCompletion && (hasActionSignal || hasStrongActionSignal)
           // 有强操作信号时第一轮也触发（如"添加字段"→模型说"让我先读取"但没输出tool）
           // 无强信号时只在已调用过工具后触发（防止"你好"误判）
           const shouldRetry = hasStrongActionSignal || this.currentIteration > 1
