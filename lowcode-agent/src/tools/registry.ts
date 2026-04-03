@@ -7,6 +7,7 @@ import { deleteFileTool } from './delete-json.js'
 import { moveFileTool } from './move-json.js'
 import { batchDeleteTool } from './batch-delete.js'
 import { batchWriteTool } from './batch-write.js'
+import { writeFileTool } from './write-file.js'
 
 /**
  * Tool Registry — manages all available tools.
@@ -40,6 +41,7 @@ export function createDefaultRegistry(): ToolRegistry {
   registry.register(moveFileTool)
   registry.register(batchDeleteTool)
   registry.register(batchWriteTool)
+  registry.register(writeFileTool)
 
   return registry
 }

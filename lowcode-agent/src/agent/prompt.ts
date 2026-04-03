@@ -81,6 +81,13 @@ JSON 参数
 </tool>
 参数：file_paths（必填，文件相对路径数组）
 
+### write_file
+写入任意文本文件（Markdown、YAML、TXT 等）。**当需要创建非 JSON 文件时使用此工具**，JSON 文件请用 write_json 或 write_files。
+<tool name="write_file">
+{"file_path": "README.md", "content": "# 项目标题\n\n项目说明..."}
+</tool>
+参数：file_path（必填，相对路径）、content（必填，文本字符串）
+
 ### move_file
 移动或重命名文件。用于将文件从一个目录移动到另一个目录（如把接口从 pages 移到 apis），或重命名文件。
 <tool name="move_file">

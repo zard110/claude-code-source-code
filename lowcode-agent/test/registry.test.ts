@@ -30,12 +30,12 @@ describe('ToolRegistry', () => {
 })
 
 describe('createDefaultRegistry', () => {
-  it('注册了 8 个内置工具', () => {
+  it('注册了 9 个内置工具', () => {
     const registry = createDefaultRegistry()
     const tools = registry.getAll()
-    expect(tools).toHaveLength(8)
+    expect(tools).toHaveLength(9)
     const names = tools.map(t => t.name).sort()
-    expect(names).toEqual(['delete_file', 'delete_files', 'list_files', 'modify_json', 'move_file', 'read_json', 'write_files', 'write_json'])
+    expect(names).toEqual(['delete_file', 'delete_files', 'list_files', 'modify_json', 'move_file', 'read_json', 'write_file', 'write_files', 'write_json'])
   })
 
   it('所有工具都有 name 和 description', () => {
@@ -51,6 +51,6 @@ describe('createDefaultRegistry', () => {
     const readOnly = registry.getAll().filter(t => t.isReadOnly).map(t => t.name).sort()
     const writeOps = registry.getAll().filter(t => !t.isReadOnly).map(t => t.name).sort()
     expect(readOnly).toEqual(['list_files', 'read_json'])
-    expect(writeOps).toEqual(['delete_file', 'delete_files', 'modify_json', 'move_file', 'write_files', 'write_json'])
+    expect(writeOps).toEqual(['delete_file', 'delete_files', 'modify_json', 'move_file', 'write_file', 'write_files', 'write_json'])
   })
 })
