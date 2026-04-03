@@ -537,7 +537,7 @@ export class AgentLoop {
               const itemCount = plan.items.length
               const desc = `创建「${plan.title}」系统（共 ${itemCount} 项）`
               const summaryLines = plan.items
-                .map((item, i) => `  ${i + 1}. [${item.type === 'page' ? '页面' : '接口'}] ${item.description} → ${item.filePath}`)
+                .map((item, i) => `  ${i + 1}. [${item.type === 'page' ? '页面' : item.type === 'api' ? '接口' : '模型'}] ${item.description} → ${item.filePath}`)
                 .join('\n')
 
               let approved = false
